@@ -22,7 +22,6 @@ import (
 	"go.uber.org/zap/zapcore"
 )
 
-// CustomZapLoggerMiddleware creates a Fiber middleware for Zap logging
 func CustomZapLoggerMiddleware(logger *zap.Logger) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		start := time.Now()
@@ -58,7 +57,7 @@ func CustomZapLoggerMiddleware(logger *zap.Logger) fiber.Handler {
 			logger.Info("Request completed", fields...)
 		}
 
-		return chainErr // Return the error from the chain
+		return chainErr 
 	}
 }
 
