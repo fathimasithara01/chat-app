@@ -1,0 +1,25 @@
+package constant
+
+var (
+	SUCESS               = 200
+	BADREQUEST           = 400
+	UNAUTHORIZED         = 401
+	FORBIDDEN            = 403
+	NOTFOUND             = 404
+	METHODNOTALLOWED     = 405
+	INTERNALSERVERERROR  = 500
+	NOTIMPLEMENTED       = 501
+	BADGATEWAY           = 502
+	SERVICEUNAVAILABLE   = 503
+	GATEWAYTIMEOUT       = 504
+	UNSUPPORTEDMEDIATYPE = 415
+	UNPROCESSABLEENTITY  = 422
+	PENDING              = "PENDING"
+	COMPLETED            = "COMPLETED"
+	DEPOSIT              = "DEPOSIT"
+	SPEND                = "SPEND"
+	WITHDRAW             = "WITHDRAW"
+	APPROVED             = "APPROVED"
+	ACCEPTED             = "ACCEPTED"
+	REJECTED             = "REJECTED"
+)
