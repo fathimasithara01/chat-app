@@ -8,22 +8,62 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/fathima-sithara/chat-app/internal/brevo"
-	"github.com/fathima-sithara/chat-app/internal/config"
-	"github.com/fathima-sithara/chat-app/internal/handlers"
-	"github.com/fathima-sithara/chat-app/internal/repository"
-	"github.com/fathima-sithara/chat-app/internal/services"
-	"github.com/fathima-sithara/chat-app/internal/twilio"
+	"github.com/fathima-sithara/auth-service/internal/brevo"
+	"github.com/fathima-sithara/auth-service/internal/config"
+	"github.com/fathima-sithara/auth-service/internal/handlers"
+	"github.com/fathima-sithara/auth-service/internal/repository"
+	"github.com/fathima-sithara/auth-service/internal/services"
+	"github.com/fathima-sithara/auth-service/internal/twilio"
 	"github.com/gofiber/fiber/v2"
 	"github.com/redis/go-redis/v9"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 )
 
+// CustomZapLoggerMiddleware creates a Fiber middleware for Zap logging
+func CustomZapLoggerMiddleware(logger *zap.Logger) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		start := time.Now()
+		chainErr := c.Next() // Process the request
+
+		// Get status code and error message (if any) after request is processed
+		status := c.Response().StatusCode()
+		var errMsg string
+		if chainErr != nil {
+			errMsg = chainErr.Error()
+			if e, ok := chainErr.(*fiber.Error); ok {
+				status = e.Code
+			}
+		}
+
+		duration := time.Since(start)
+
+		// Log request details
+		fields := []zapcore.Field{
+			zap.String("ip", c.IP()),
+			zap.String("method", c.Method()),
+			zap.String("path", c.Path()),
+			zap.Int("status", status),
+			zap.String("latency", duration.String()),
+			zap.String("user_agent", c.Get("User-Agent")),
+			zap.String("request_id", c.Get("X-Request-ID")), // If you use request IDs
+		}
+
+		if errMsg != "" {
+			fields = append(fields, zap.String("error", errMsg))
+			logger.Error("Request completed with error", fields...)
+		} else {
+			logger.Info("Request completed", fields...)
+		}
+
+		return chainErr // Return the error from the chain
+	}
+}
+
 func main() {
-	// load configuration
-	cfgPath := "./config/config.yaml"
+	cfgPath := "config.yaml"
 	cfg, err := config.Load(cfgPath)
 	if err != nil {
 		panic(fmt.Sprintf("failed to load config: %v", err))
@@ -75,7 +115,9 @@ func main() {
 		ReadTimeout:  10 * time.Second,
 		WriteTimeout: 10 * time.Second,
 	})
-	app.Use(logger.New())
+
+	// Apply custom Zap logger middleware
+	app.Use(CustomZapLoggerMiddleware(logger))
 
 	api := app.Group("/api/v1")
 	auth := api.Group("/auth")

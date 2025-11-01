@@ -1,106 +1,163 @@
 package handlers
 
 import (
-	"github.com/fathima-sithara/chat-app/internal/services"
+	"errors"
+	"net/http"
+	"time"
+
+	"github.com/fathima-sithara/auth-service/internal/models"
+	"github.com/fathima-sithara/auth-service/internal/services"
+	"github.com/fathima-sithara/auth-service/internal/utils"
+	"github.com/go-playground/validator/v10"
 	"github.com/gofiber/fiber/v2"
 )
 
+// Global validator instance
+var validate = validator.New()
+
+// ErrorResponse defines a standard structure for API error messages
+type ErrorResponse struct {
+	Message    string      `json:"message"`
+	StatusCode int         `json:"status_code"`
+	Timestamp  string      `json:"timestamp"`
+	Errors     interface{} `json:"errors,omitempty"` // For validation errors
+}
+
+// NewErrorResponse creates a new ErrorResponse instance
+func NewErrorResponse(statusCode int, message string, errs ...interface{}) ErrorResponse {
+	response := ErrorResponse{
+		Message:    message,
+		StatusCode: statusCode,
+		Timestamp:  time.Now().Format(time.RFC3339),
+	}
+	if len(errs) > 0 && errs[0] != nil {
+		response.Errors = errs[0]
+	}
+	return response
+}
+
+// Handler holds dependencies for HTTP handlers
 type Handler struct {
-	svc *services.AuthService
+	authService services.AuthService
 }
 
-func NewHandler(svc *services.AuthService) *Handler {
-	return &Handler{svc: svc}
+// NewHandler creates a new Handler instance
+func NewHandler(authService services.AuthService) *Handler {
+	return &Handler{
+		authService: authService,
+	}
 }
 
-type requestOTPReq struct {
-	Phone string `json:"phone"`
-}
-
+// RequestOTP handles requests for OTP via phone
 func (h *Handler) RequestOTP(c *fiber.Ctx) error {
-	var req requestOTPReq
-	if err := c.BodyParser(&req); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, "invalid body")
+	req := new(models.OTPRequest)
+	if err := c.BodyParser(req); err != nil {
+		return c.Status(http.StatusBadRequest).JSON(NewErrorResponse(http.StatusBadRequest, "Invalid request payload"))
 	}
-	if req.Phone == "" {
-		return fiber.NewError(fiber.StatusBadRequest, "phone required")
+
+	// Validate the request struct
+	if err := validate.Struct(req); err != nil {
+		return c.Status(http.StatusBadRequest).JSON(NewErrorResponse(http.StatusBadRequest, "Validation failed", utils.FormatValidationErrors(err)))
 	}
-	if err := h.svc.RegisterOrRequestOTP(c.Context(), req.Phone); err != nil {
-		return fiber.NewError(fiber.StatusTooManyRequests, err.Error())
+
+	if err := h.authService.RequestOTP(c.Context(), req.PhoneNumber); err != nil {
+		if errors.Is(err, services.ErrOTPRateLimited) {
+			return c.Status(http.StatusTooManyRequests).JSON(NewErrorResponse(http.StatusTooManyRequests, err.Error()))
+		}
+		// Log the underlying error in your service layer or here if necessary for debugging
+		return c.Status(http.StatusInternalServerError).JSON(NewErrorResponse(http.StatusInternalServerError, "Failed to request OTP"))
 	}
-	return c.Status(fiber.StatusOK).JSON(fiber.Map{"message": "otp_sent"})
+	return c.Status(http.StatusOK).JSON(fiber.Map{"message": "OTP requested successfully"})
 }
 
-type verifyOTPReq struct {
-	Phone string `json:"phone"`
-	Code  string `json:"code"`
-}
-
+// VerifyOTP handles OTP verification
 func (h *Handler) VerifyOTP(c *fiber.Ctx) error {
-	var req verifyOTPReq
-	if err := c.BodyParser(&req); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, "invalid body")
+	req := new(models.OTPVerification)
+	if err := c.BodyParser(req); err != nil {
+		return c.Status(http.StatusBadRequest).JSON(NewErrorResponse(http.StatusBadRequest, "Invalid request payload"))
 	}
-	access, refresh, user, err := h.svc.VerifyOTPAndLogin(c.Context(), req.Phone, req.Code)
+
+	// Validate the request struct
+	if err := validate.Struct(req); err != nil {
+		return c.Status(http.StatusBadRequest).JSON(NewErrorResponse(http.StatusBadRequest, "Validation failed", utils.FormatValidationErrors(err)))
+	}
+
+	tokens, err := h.authService.VerifyOTP(c.Context(), req.PhoneNumber, req.Code)
 	if err != nil {
-		return fiber.NewError(fiber.StatusUnauthorized, err.Error())
+		if errors.Is(err, services.ErrInvalidOTP) || errors.Is(err, services.ErrOTPExpired) {
+			return c.Status(http.StatusUnauthorized).JSON(NewErrorResponse(http.StatusUnauthorized, err.Error()))
+		}
+		return c.Status(http.StatusInternalServerError).JSON(NewErrorResponse(http.StatusInternalServerError, "Failed to verify OTP"))
 	}
-	return c.JSON(fiber.Map{
-		"access_token":  access,
-		"refresh_token": refresh,
-		"user":          user,
-	})
+	return c.Status(http.StatusOK).JSON(tokens)
 }
 
-type registerEmailReq struct {
-	Email    string `json:"email"`
-	Password string `json:"password"`
-}
-
+// RegisterEmail handles new user registration with email and password
 func (h *Handler) RegisterEmail(c *fiber.Ctx) error {
-	var req registerEmailReq
-	if err := c.BodyParser(&req); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, "invalid body")
+	req := new(models.RegisterEmailRequest)
+	if err := c.BodyParser(req); err != nil {
+		return c.Status(http.StatusBadRequest).JSON(NewErrorResponse(http.StatusBadRequest, "Invalid request payload"))
 	}
-	user, err := h.svc.RegisterWithEmail(c.Context(), req.Email, req.Password)
+
+	// Validate the request struct
+	if err := validate.Struct(req); err != nil {
+		return c.Status(http.StatusBadRequest).JSON(NewErrorResponse(http.StatusBadRequest, "Validation failed", utils.FormatValidationErrors(err)))
+	}
+
+	user, err := h.authService.RegisterEmail(c.Context(), req.Email, req.Password, req.FullName)
 	if err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, err.Error())
+		if errors.Is(err, services.ErrUserAlreadyExists) {
+			return c.Status(http.StatusConflict).JSON(NewErrorResponse(http.StatusConflict, err.Error()))
+		}
+		return c.Status(http.StatusInternalServerError).JSON(NewErrorResponse(http.StatusInternalServerError, "Failed to register user"))
 	}
-	return c.Status(fiber.StatusCreated).JSON(fiber.Map{"user": user})
-}
 
-type verifyEmailReq struct {
-	Token string `json:"token"`
-}
-
-func (h *Handler) VerifyEmail(c *fiber.Ctx) error {
-	var req verifyEmailReq
-	if err := c.BodyParser(&req); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, "invalid body")
-	}
-	user, err := h.svc.VerifyEmailToken(c.Context(), req.Token)
-	if err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, err.Error())
-	}
-	return c.JSON(fiber.Map{"user": user})
-}
-
-type refreshReq struct {
-	UserUUID     string `json:"user_uuid"`
-	RefreshToken string `json:"refresh_token"`
-}
-
-func (h *Handler) Refresh(c *fiber.Ctx) error {
-	var req refreshReq
-	if err := c.BodyParser(&req); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, "invalid body")
-	}
-	access, newRefresh, err := h.svc.RefreshAccessToken(c.Context(), req.UserUUID, req.RefreshToken)
-	if err != nil {
-		return fiber.NewError(fiber.StatusUnauthorized, err.Error())
-	}
-	return c.JSON(fiber.Map{
-		"access_token":  access,
-		"refresh_token": newRefresh,
+	return c.Status(http.StatusCreated).JSON(fiber.Map{
+		"message": "User registered. Please check your email for verification.",
+		"user_id": user.ID.Hex(),
 	})
+}
+
+// VerifyEmail handles email verification using a code
+func (h *Handler) VerifyEmail(c *fiber.Ctx) error {
+	req := new(models.VerifyEmailRequest)
+	if err := c.BodyParser(req); err != nil {
+		return c.Status(http.StatusBadRequest).JSON(NewErrorResponse(http.StatusBadRequest, "Invalid request payload"))
+	}
+
+	// Validate the request struct
+	if err := validate.Struct(req); err != nil {
+		return c.Status(http.StatusBadRequest).JSON(NewErrorResponse(http.StatusBadRequest, "Validation failed", utils.FormatValidationErrors(err)))
+	}
+
+	tokens, err := h.authService.VerifyEmail(c.Context(), req.Email, req.Code)
+	if err != nil {
+		if errors.Is(err, services.ErrInvalidVerificationCode) || errors.Is(err, services.ErrVerificationCodeExpired) {
+			return c.Status(http.StatusUnauthorized).JSON(NewErrorResponse(http.StatusUnauthorized, err.Error()))
+		}
+		return c.Status(http.StatusInternalServerError).JSON(NewErrorResponse(http.StatusInternalServerError, "Failed to verify email"))
+	}
+	return c.Status(http.StatusOK).JSON(tokens)
+}
+
+// Refresh handles token refresh requests
+func (h *Handler) Refresh(c *fiber.Ctx) error {
+	req := new(models.RefreshTokenRequest)
+	if err := c.BodyParser(req); err != nil {
+		return c.Status(http.StatusBadRequest).JSON(NewErrorResponse(http.StatusBadRequest, "Invalid request payload"))
+	}
+
+	// Validate the request struct
+	if err := validate.Struct(req); err != nil {
+		return c.Status(http.StatusBadRequest).JSON(NewErrorResponse(http.StatusBadRequest, "Validation failed", utils.FormatValidationErrors(err)))
+	}
+
+	tokens, err := h.authService.RefreshTokens(c.Context(), req.RefreshToken)
+	if err != nil {
+		if errors.Is(err, services.ErrInvalidRefreshToken) {
+			return c.Status(http.StatusUnauthorized).JSON(NewErrorResponse(http.StatusUnauthorized, err.Error()))
+		}
+		return c.Status(http.StatusInternalServerError).JSON(NewErrorResponse(http.StatusInternalServerError, "Failed to refresh tokens"))
+	}
+	return c.Status(http.StatusOK).JSON(tokens)
 }

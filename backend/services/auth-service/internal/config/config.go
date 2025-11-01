@@ -1,85 +1,98 @@
 package config
 
 import (
-	"github.com/spf13/viper"
+	"fmt"
+	"os"
+
+	"github.com/joho/godotenv"
+	"gopkg.in/yaml.v3"
 )
 
-type JWTConfig struct {
-	Secret           string `mapstructure:"secret"`
-	AccessTTLMinutes int    `mapstructure:"access_ttl_minutes"`
-	RefreshTTLDays   int    `mapstructure:"refresh_ttl_days"`
-}
-
-type AppConfig struct {
-	Env  string    `mapstructure:"env"`
-	Port int       `mapstructure:"port"`
-	JWT  JWTConfig `mapstructure:"jwt"`
-}
-
-type MongoConfig struct {
-	URI      string `mapstructure:"uri"`
-	Database string `mapstructure:"database"`
-}
-
-type RedisConfig struct {
-	Addr     string `mapstructure:"addr"`
-	Password string `mapstructure:"password"`
-	DB       int    `mapstructure:"db"`
-}
-
-type TwilioConfig struct {
-	AccountSID string `mapstructure:"account_sid"`
-	AuthToken  string `mapstructure:"auth_token"`
-	From       string `mapstructure:"from"`
-}
-
-type BrevoConfig struct {
-	APIKey    string `mapstructure:"api_key"`
-	FromEmail string `mapstructure:"from_email"`
-	FromName  string `mapstructure:"from_name"`
-}
-
-type SecurityConfig struct {
-	OtpTTLMinutes               int `mapstructure:"otp_ttl_minutes"`
-	OtpRateLimitPerPhonePerHour int `mapstructure:"otp_rate_limit_per_phone_per_hour"`
-}
-
+// Config holds the application's configuration
 type Config struct {
-	App      AppConfig      `mapstructure:"app"`
-	Mongo    MongoConfig    `mapstructure:"mongo"`
-	Redis    RedisConfig    `mapstructure:"redis"`
-	Twilio   TwilioConfig   `mapstructure:"twilio"`
-	Brevo    BrevoConfig    `mapstructure:"brevo"`
-	Security SecurityConfig `mapstructure:"security"`
-	LogLevel string         `mapstructure:"log.level"`
+	App struct {
+		Port int    `yaml:"port"`
+		Env  string `yaml:"env"`
+		JWT  struct {
+			Secret           string `yaml:"secret"`
+			AccessTTLMinutes int    `yaml:"accessTTLMinutes"`
+			RefreshTTLDays   int    `yaml:"refreshTTLDays"`
+		} `yaml:"jwt"`
+	} `yaml:"app"`
+	Security struct {
+		OtpTTLMinutes               int `yaml:"otpTTLMinutes"`
+		OtpRateLimitPerPhonePerHour int `yaml:"otpRateLimitPerPhonePerHour"`
+	} `yaml:"security"`
+	Mongo struct {
+		URI      string `yaml:"uri"`
+		Database string `yaml:"database"`
+	} `yaml:"mongo"`
+	Redis struct {
+		Addr     string `yaml:"addr"`
+		Password string `yaml:"password"`
+		DB       int    `yaml:"db"`
+	} `yaml:"redis"`
+	Twilio struct {
+		AccountSID string `yaml:"accountSID"`
+		AuthToken  string `yaml:"authToken"`
+		From       string `yaml:"from"`
+	} `yaml:"twilio"`
+	Brevo struct {
+		APIKey    string `yaml:"apiKey"`
+		FromEmail string `yaml:"fromEmail"`
+		FromName  string `yaml:"fromName"`
+	} `yaml:"brevo"`
 }
 
+// Load reads configuration from a YAML file and environment variables.
 func Load(path string) (*Config, error) {
-	v := viper.New()
-	v.SetConfigFile(path)
-	v.AutomaticEnv()
-	v.SetEnvPrefix("AUTH")
+	// Load .env file (if it exists) to get environment variables
+	_ = godotenv.Load() // Ignore error if .env doesn't exist
 
-	if err := v.ReadInConfig(); err != nil {
-		return nil, err
+	cfg := &Config{}
+
+	// Read YAML file
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read config file %s: %w", path, err)
 	}
 
-	var c Config
-	if err := v.Unmarshal(&c); err != nil {
-		return nil, err
+	if err := yaml.Unmarshal(data, cfg); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal config file %s: %w", path, err)
 	}
 
-	if c.App.JWT.AccessTTLMinutes == 0 {
-		c.App.JWT.AccessTTLMinutes = 15
+	// Override with environment variables if present
+	// This allows sensitive data like API keys to be set via env vars in production
+	if secret := os.Getenv("JWT_SECRET"); secret != "" {
+		cfg.App.JWT.Secret = secret
+	}
+	if mongoURI := os.Getenv("MONGO_URI"); mongoURI != "" {
+		cfg.Mongo.URI = mongoURI
+	}
+	if redisAddr := os.Getenv("REDIS_ADDR"); redisAddr != "" {
+		cfg.Redis.Addr = redisAddr
+	}
+	if redisPassword := os.Getenv("REDIS_PASSWORD"); redisPassword != "" {
+		cfg.Redis.Password = redisPassword
+	}
+	if twilioSID := os.Getenv("TWILIO_ACCOUNT_SID"); twilioSID != "" {
+		cfg.Twilio.AccountSID = twilioSID
+	}
+	if twilioAuth := os.Getenv("TWILIO_AUTH_TOKEN"); twilioAuth != "" {
+		cfg.Twilio.AuthToken = twilioAuth
+	}
+	if twilioFrom := os.Getenv("TWILIO_FROM_PHONE"); twilioFrom != "" {
+		cfg.Twilio.From = twilioFrom
+	}
+	if brevoKey := os.Getenv("BREVO_API_KEY"); brevoKey != "" {
+		cfg.Brevo.APIKey = brevoKey
+	}
+	if brevoFromEmail := os.Getenv("BREVO_FROM_EMAIL"); brevoFromEmail != "" {
+		cfg.Brevo.FromEmail = brevoFromEmail
+	}
+	if brevoFromName := os.Getenv("BREVO_FROM_NAME"); brevoFromName != "" {
+		cfg.Brevo.FromName = brevoFromName
 	}
 
-	if c.App.JWT.RefreshTTLDays == 0 {
-		c.App.JWT.RefreshTTLDays = 30
-	}
-
-	if c.Security.OtpTTLMinutes == 0 {
-		c.Security.OtpTTLMinutes = 5
-	}
-
-	return &c, nil
+	return cfg, nil
 }

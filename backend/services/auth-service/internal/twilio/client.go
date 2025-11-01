@@ -1,56 +1,72 @@
 package twilio
 
 import (
-    "context"
-    "encoding/json"
-    "fmt"
-    "net/http"
-    "net/url"
-    "strings"
-    "time"
+	"context"
+	"fmt"
+	"io" // Added import for io
+	"net/http"
+	"net/url"
+	"strings"
+	"time"
 )
 
-type Client struct {
-    AccountSID string
-    AuthToken  string
-    From       string
-    httpClient *http.Client
+// Client defines the Twilio SMS client interface
+type Client interface {
+	SendSMS(ctx context.Context, toPhoneNumber, message string) error
 }
 
-func NewClient(sid, token, from string) *Client {
-    return &Client{
-        AccountSID: sid,
-        AuthToken:  token,
-        From:       from,
-        httpClient: &http.Client{Timeout: 10 * time.Second},
-    }
+// twilioClient implements the Client interface
+type twilioClient struct {
+	accountSID string
+	authToken  string
+	fromNumber string
+	httpClient *http.Client
 }
 
-func (c *Client) SendSMS(ctx context.Context, to string, body string) error {
-    // POST to https://api.twilio.com/2010-04-01/Accounts/{AccountSid}/Messages.json
-    endpoint := fmt.Sprintf("https://api.twilio.com/2010-04-01/Accounts/%s/Messages.json", c.AccountSID)
-    data := url.Values{}
-    data.Set("To", to)
-    data.Set("From", c.From)
-    data.Set("Body", body)
+// NewClient creates a new Twilio client
+func NewClient(accountSID, authToken, fromNumber string) Client {
+	return &twilioClient{
+		accountSID: accountSID,
+		authToken:  authToken,
+		fromNumber: fromNumber,
+		httpClient: &http.Client{Timeout: 10 * time.Second}, // Add a timeout to the HTTP client
+	}
+}
 
-    req, err := http.NewRequestWithContext(ctx, "POST", endpoint, strings.NewReader(data.Encode()))
-    if err != nil {
-        return err
-    }
-    req.SetBasicAuth(c.AccountSID, c.AuthToken)
-    req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+// SendSMS sends an SMS message via Twilio
+func (tc *twilioClient) SendSMS(ctx context.Context, toPhoneNumber, message string) error {
+	twilioURL := fmt.Sprintf("https://api.twilio.com/2010-04-01/Accounts/%s/Messages.json", tc.accountSID)
 
-    resp, err := c.httpClient.Do(req)
-    if err != nil {
-        return err
-    }
-    defer resp.Body.Close()
+	data := url.Values{}
+	data.Set("To", toPhoneNumber)
+	data.Set("From", tc.fromNumber)
+	data.Set("Body", message)
+	encodedData := data.Encode()
 
-    if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-        return nil
-    }
-    var respBody map[string]any
-    _ = json.NewDecoder(resp.Body).Decode(&respBody)
-    return fmt.Errorf("twilio send failed status=%d body=%v", resp.StatusCode, respBody)
+	req, err := http.NewRequestWithContext(ctx, "POST", twilioURL, strings.NewReader(encodedData))
+	if err != nil {
+		return fmt.Errorf("failed to create Twilio SMS request: %w", err)
+	}
+
+	req.SetBasicAuth(tc.accountSID, tc.authToken)
+	req.Header.Add("Accept", "application/json")
+	req.Header.Add("Content-Type", "application/x-www-form-urlencoded")
+
+	resp, err := tc.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to send Twilio SMS request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
+		// Read the response body for more detailed error from Twilio
+		var errorBody string
+		buf := new(strings.Builder)
+		_, _ = io.Copy(buf, resp.Body) // Changed from buf.ReadFrom to io.Copy
+		errorBody = buf.String()
+		return fmt.Errorf("Twilio API returned non-success status: %d - %s", resp.StatusCode, errorBody)
+	}
+
+	// You could parse the response body here to get the SID or other details if needed
+	return nil
 }

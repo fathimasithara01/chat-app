@@ -2,239 +2,356 @@ package services
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/base32"
 	"errors"
 	"fmt"
 	"time"
 
-	"github.com/fathima-sithara/chat-app/internal/brevo"
-	"github.com/fathima-sithara/chat-app/internal/models"
-	"github.com/fathima-sithara/chat-app/internal/repository"
-	"github.com/fathima-sithara/chat-app/internal/twilio"
-	"github.com/fathima-sithara/chat-app/internal/utils"
-	"github.com/google/uuid"
-
+	"github.com/fathima-sithara/auth-service/internal/brevo"
+	"github.com/fathima-sithara/auth-service/internal/models"
+	"github.com/fathima-sithara/auth-service/internal/repository"
+	"github.com/fathima-sithara/auth-service/internal/twilio"
+	"github.com/fathima-sithara/auth-service/internal/utils"
 	"github.com/redis/go-redis/v9"
+	"go.mongodb.org/mongo-driver/mongo"
+	"golang.org/x/crypto/bcrypt"
 )
 
-var (
-	ErrUserNotFound = errors.New("user not found")
-	ErrInvalidCreds = errors.New("invalid credentials")
+const (
+	otpPrefix               = "otp:"
+	otpRateLimitPrefix      = "otp_rate_limit:"
+	emailVerificationPrefix = "email_verify:"
+	refreshTokenPrefix      = "refresh_token:"
 )
 
-type AuthService struct {
-	repo             repository.UserRepository
-	twClient         *twilio.Client
-	brClient         *brevo.Client
-	redis            *redis.Client
-	jwtSecret        string
-	accessTTL        int
-	refreshTTLDays   int
-	otpTTLMinutes    int
-	otpRateLimitHour int
+// authService implements the AuthService interface
+type authService struct {
+	userRepo                    repository.UserRepository
+	twilioClient                twilio.Client
+	brevoClient                 brevo.Client
+	redisClient                 *redis.Client
+	jwtSecret                   string
+	accessTokenTTLMinutes       int
+	refreshTokenTTLDays         int
+	otpTTLMinutes               int
+	otpRateLimitPerPhonePerHour int
 }
 
-func NewAuthService(repo repository.UserRepository, tw *twilio.Client, br *brevo.Client, rdb *redis.Client, jwtSecret string, accessTTL int, refreshTTLDays int, otpTTL int, otpRateLimit int) *AuthService {
-	return &AuthService{
-		repo:             repo,
-		twClient:         tw,
-		brClient:         br,
-		redis:            rdb,
-		jwtSecret:        jwtSecret,
-		accessTTL:        accessTTL,
-		refreshTTLDays:   refreshTTLDays,
-		otpTTLMinutes:    otpTTL,
-		otpRateLimitHour: otpRateLimit,
+// NewAuthService creates a new authentication service
+func NewAuthService(
+	userRepo repository.UserRepository,
+	twilioClient twilio.Client,
+	brevoClient brevo.Client,
+	redisClient *redis.Client,
+	jwtSecret string,
+	accessTokenTTLMinutes int,
+	refreshTokenTTLDays int,
+	otpTTLMinutes int,
+	otpRateLimitPerPhonePerHour int,
+) AuthService {
+	return &authService{
+		userRepo:                    userRepo,
+		twilioClient:                twilioClient,
+		brevoClient:                 brevoClient,
+		redisClient:                 redisClient,
+		jwtSecret:                   jwtSecret,
+		accessTokenTTLMinutes:       accessTokenTTLMinutes,
+		refreshTokenTTLDays:         refreshTokenTTLDays,
+		otpTTLMinutes:               otpTTLMinutes,
+		otpRateLimitPerPhonePerHour: otpRateLimitPerPhonePerHour,
 	}
 }
 
-// RegisterByPhone creates or returns existing user and sends OTP
-func (s *AuthService) RegisterOrRequestOTP(ctx context.Context, phone string) error {
-	// rate limit OTP per phone per hour via Redis
-	rlKey := fmt.Sprintf("otp_rl:%s", phone)
-	cnt, _ := s.redis.Get(ctx, rlKey).Int()
-	if cnt >= s.otpRateLimitHour {
-		return fmt.Errorf("otp rate limit exceeded")
-	}
-	if err := s.redis.Incr(ctx, rlKey).Err(); err == nil {
-		s.redis.Expire(ctx, rlKey, time.Hour)
+// RequestOTP sends an OTP to the given phone number.
+func (s *authService) RequestOTP(ctx context.Context, phoneNumber string) error {
+	// 1. Check rate limit
+	rateLimitKey := otpRateLimitPrefix + phoneNumber
+	count, err := s.redisClient.Incr(ctx, rateLimitKey).Result()
+	if err != nil {
+		return fmt.Errorf("failed to increment OTP rate limit: %w", ErrInternal)
 	}
 
-	// generate OTP (6-digit)
-	otp := s.generateOTP()
-	otpKey := fmt.Sprintf("otp:%s", phone)
-	if err := s.redis.Set(ctx, otpKey, otp, time.Duration(s.otpTTLMinutes)*time.Minute).Err(); err != nil {
-		return err
+	if count == 1 {
+		// Set expiration for the rate limit key if it's the first request
+		_, err = s.redisClient.Expire(ctx, rateLimitKey, time.Hour).Result()
+		if err != nil {
+			return fmt.Errorf("failed to set expiry for OTP rate limit: %w", ErrInternal)
+		}
+	} else if count > int64(s.otpRateLimitPerPhonePerHour) {
+		// If limit exceeded, reset count to avoid continuous increment and return error
+		s.redisClient.Decr(ctx, rateLimitKey) // Decrement to reflect only valid attempts
+		return ErrOTPRateLimited
 	}
 
-	// send SMS via Twilio
-	body := fmt.Sprintf("Your Chat App OTP is %s. It will expire in %d minutes.", otp, s.otpTTLMinutes)
-	return s.twClient.SendSMS(ctx, phone, body)
+	// 2. Generate OTP
+	otpCode := utils.GenerateOTP(6) // Assuming 6-digit OTP
+
+	// 3. Store OTP in Redis with expiration
+	otpKey := otpPrefix + phoneNumber
+	err = s.redisClient.Set(ctx, otpKey, otpCode, time.Duration(s.otpTTLMinutes)*time.Minute).Err()
+	if err != nil {
+		return fmt.Errorf("failed to store OTP in Redis: %w", ErrInternal)
+	}
+
+	// 4. Send OTP via Twilio
+	message := fmt.Sprintf("Your Chat App verification code is: %s. It is valid for %d minutes.", otpCode, s.otpTTLMinutes)
+	err = s.twilioClient.SendSMS(ctx, phoneNumber, message)
+	if err != nil {
+		return fmt.Errorf("failed to send OTP via Twilio: %w", ErrInternal)
+	}
+
+	return nil
 }
 
-func (s *AuthService) generateOTP() string {
-	// 6 digit numeric
-	b := make([]byte, 4)
-	_, _ = rand.Read(b)
-	// base32 then digits
-	enc := base32.StdEncoding.EncodeToString(b)
-	// extract digits
-	digits := ""
-	for i := 0; i < len(enc) && len(digits) < 6; i++ {
-		c := enc[i]
-		if c >= '0' && c <= '9' {
-			digits += string(c)
-		} else if c >= 'A' && c <= 'Z' {
-			// map letter to digit
-			digits += fmt.Sprintf("%d", int(c)%10)
+// VerifyOTP verifies the provided OTP and logs in the user, or creates one if not exists.
+func (s *authService) VerifyOTP(ctx context.Context, phoneNumber, code string) (*models.AuthTokens, error) {
+	otpKey := otpPrefix + phoneNumber
+	storedOTP, err := s.redisClient.Get(ctx, otpKey).Result()
+	if err != nil {
+		if errors.Is(err, redis.Nil) {
+			return nil, ErrOTPExpired // OTP either expired or never sent
+		}
+		return nil, fmt.Errorf("failed to get OTP from Redis: %w", ErrInternal)
+	}
+
+	if storedOTP != code {
+		return nil, ErrInvalidOTP
+	}
+
+	// OTP is valid, delete it from Redis
+	s.redisClient.Del(ctx, otpKey)
+
+	// Find or create user
+	user, err := s.userRepo.FindUserByPhoneNumber(ctx, phoneNumber)
+	if err != nil {
+		if errors.Is(err, errors.New("user not found")) { // Check for specific "not found" error from repo
+			// User doesn't exist, create a new one
+			newUser := &models.User{
+				PhoneNumber: phoneNumber,
+				IsVerified:  true,                  // Phone number is verified through OTP
+				FullName:    "User-" + phoneNumber, // Default name, user can update later
+			}
+			if createErr := s.userRepo.CreateUser(ctx, newUser); createErr != nil {
+				return nil, fmt.Errorf("failed to create new user: %w", ErrInternal)
+			}
+			user = newUser
+		} else {
+			return nil, fmt.Errorf("failed to find user by phone number: %w", ErrInternal)
 		}
 	}
-	for len(digits) < 6 {
-		digits += "0"
+
+	// Generate and return tokens
+	tokens, err := s.generateAndStoreTokens(ctx, user.ID.Hex())
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate tokens: %w", ErrInternal)
 	}
-	return digits[:6]
+
+	// Update last login time
+	now := time.Now()
+	user.LastLoginAt = &now
+	if err := s.userRepo.UpdateUser(ctx, user); err != nil {
+		// Log this error but don't return, as auth was successful
+		fmt.Printf("Warning: Failed to update last login time for user %s: %v\n", user.ID.Hex(), err)
+	}
+
+	return tokens, nil
 }
 
-func (s *AuthService) VerifyOTPAndLogin(ctx context.Context, phone, otp string) (string /*access token*/, string /*refresh token*/, *models.User, error) {
-	otpKey := fmt.Sprintf("otp:%s", phone)
-	stored, err := s.redis.Get(ctx, otpKey).Result()
-	if err != nil {
-		return "", "", nil, fmt.Errorf("otp expired or not found")
+// RegisterEmail registers a new user with email and password, sending a verification email.
+func (s *authService) RegisterEmail(ctx context.Context, email, password, fullName string) (*models.User, error) {
+	// Check if user already exists
+	_, err := s.userRepo.FindUserByEmail(ctx, email)
+	if err == nil {
+		return nil, ErrUserAlreadyExists
 	}
-	if stored != otp {
-		return "", "", nil, fmt.Errorf("invalid otp")
+	if err != nil && !errors.Is(err, errors.New("user not found")) {
+		return nil, fmt.Errorf("failed to check existing user by email: %w", ErrInternal)
 	}
 
-	// find user or create
-	u, err := s.repo.FindByPhone(ctx, phone)
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 	if err != nil {
-		return "", "", nil, err
+		return nil, fmt.Errorf("failed to hash password: %w", ErrInternal)
 	}
-	if u == nil {
-		u = &models.User{
-			UUID:            uuid.New().String(),
-			Phone:           phone,
-			IsPhoneVerified: true,
-			CreatedAt:       time.Now().UTC(),
-			UpdatedAt:       time.Now().UTC(),
+
+	newUser := &models.User{
+		FullName:     fullName,
+		Email:        email,
+		PasswordHash: string(hashedPassword),
+		IsVerified:   false, // Email needs verification
+	}
+
+	if err := s.userRepo.CreateUser(ctx, newUser); err != nil {
+		var writeException mongo.WriteException
+		if errors.As(err, &writeException) {
+			for _, we := range writeException.WriteErrors {
+				if we.Code == 11000 { // Duplicate key error
+					return nil, ErrUserAlreadyExists
+				}
+			}
 		}
-		if err := s.repo.Create(ctx, u); err != nil {
-			return "", "", nil, err
+		return nil, fmt.Errorf("failed to create new email user: %w", ErrInternal)
+	}
+
+	// Generate email verification code
+	verificationCode := utils.GenerateOTP(6) // Reusing OTP generation for email
+	emailVerifyKey := emailVerificationPrefix + email
+	err = s.redisClient.Set(ctx, emailVerifyKey, verificationCode, time.Duration(s.otpTTLMinutes)*time.Minute).Err()
+	if err != nil {
+		// Log this but don't block user creation, as email can be resent
+		fmt.Printf("Warning: Failed to store email verification code for %s: %v\n", email, err)
+	}
+
+	// Send verification email
+	go func() {
+		emailCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		sendErr := s.brevoClient.SendVerificationEmail(emailCtx, email, fullName, verificationCode)
+		if sendErr != nil {
+			fmt.Printf("Warning: Failed to send verification email to %s: %v\n", email, sendErr)
 		}
-	} else {
-		// mark phone verified if not
-		if !u.IsPhoneVerified {
-			u.IsPhoneVerified = true
-			_ = s.repo.Update(ctx, u)
+	}()
+
+	return newUser, nil
+}
+
+// VerifyEmail verifies the provided email verification code.
+func (s *authService) VerifyEmail(ctx context.Context, email, code string) (*models.AuthTokens, error) {
+	emailVerifyKey := emailVerificationPrefix + email
+	storedCode, err := s.redisClient.Get(ctx, emailVerifyKey).Result()
+	if err != nil {
+		if errors.Is(err, redis.Nil) {
+			return nil, ErrVerificationCodeExpired
 		}
+		return nil, fmt.Errorf("failed to get email verification code from Redis: %w", ErrInternal)
 	}
 
-	// generate tokens
-	access, err := utils.GenerateAccessToken(s.jwtSecret, u.UUID, s.accessTTL)
+	if storedCode != code {
+		return nil, ErrInvalidVerificationCode
+	}
+
+	// Code is valid, delete from Redis
+	s.redisClient.Del(ctx, emailVerifyKey)
+
+	user, err := s.userRepo.FindUserByEmail(ctx, email)
 	if err != nil {
-		return "", "", nil, err
+		if errors.Is(err, errors.New("user not found")) {
+			return nil, ErrUserNotFound
+		}
+		return nil, fmt.Errorf("failed to find user for email verification: %w", ErrInternal)
 	}
-	refresh, err := s.createAndStoreRefreshToken(ctx, u.UUID)
+
+	if user.IsVerified {
+		return nil, errors.New("email already verified")
+	}
+
+	user.IsVerified = true
+	if err := s.userRepo.UpdateUser(ctx, user); err != nil {
+		return nil, fmt.Errorf("failed to update user verification status: %w", ErrInternal)
+	}
+
+	// Generate and return tokens
+	tokens, err := s.generateAndStoreTokens(ctx, user.ID.Hex())
 	if err != nil {
-		return "", "", nil, err
+		return nil, fmt.Errorf("failed to generate tokens: %w", ErrInternal)
 	}
 
-	// delete OTP so it can't be reused
-	_ = s.redis.Del(ctx, otpKey).Err()
+	// Update last login time
+	now := time.Now()
+	user.LastLoginAt = &now
+	if err := s.userRepo.UpdateUser(ctx, user); err != nil {
+		fmt.Printf("Warning: Failed to update last login time for user %s: %v\n", user.ID.Hex(), err)
+	}
 
-	return access, refresh, u, nil
+	return tokens, nil
 }
 
-func (s *AuthService) createAndStoreRefreshToken(ctx context.Context, userUUID string) (string, error) {
-	// create strong refresh token - random UUID + expiry stored hashed in Redis
-	rt := uuid.New().String()
-	key := fmt.Sprintf("refresh:%s:%s", userUUID, rt)
-	// store as key with TTL equals refreshTTLDays
-	if err := s.redis.Set(ctx, key, "1", time.Duration(s.refreshTTLDays)*24*time.Hour).Err(); err != nil {
-		return "", err
+// LoginEmail logs in a user with email and password.
+func (s *authService) LoginEmail(ctx context.Context, email, password string) (*models.AuthTokens, error) {
+	user, err := s.userRepo.FindUserByEmail(ctx, email)
+	if err != nil {
+		if errors.Is(err, errors.New("user not found")) {
+			return nil, ErrInvalidCredentials
+		}
+		return nil, fmt.Errorf("failed to find user during email login: %w", ErrInternal)
 	}
-	return rt, nil
+
+	if !user.IsVerified {
+		return nil, ErrEmailNotVerified
+	}
+
+	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(password)); err != nil {
+		return nil, ErrInvalidCredentials
+	}
+
+	// Generate and return tokens
+	tokens, err := s.generateAndStoreTokens(ctx, user.ID.Hex())
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate tokens: %w", ErrInternal)
+	}
+
+	// Update last login time
+	now := time.Now()
+	user.LastLoginAt = &now
+	if err := s.userRepo.UpdateUser(ctx, user); err != nil {
+		fmt.Printf("Warning: Failed to update last login time for user %s: %v\n", user.ID.Hex(), err)
+	}
+
+	return tokens, nil
 }
 
-func (s *AuthService) RefreshAccessToken(ctx context.Context, userUUID, refreshToken string) (string, string, error) {
-	key := fmt.Sprintf("refresh:%s:%s", userUUID, refreshToken)
-	ok, err := s.redis.Exists(ctx, key).Result()
+// RefreshTokens refreshes access and refresh tokens.
+func (s *authService) RefreshTokens(ctx context.Context, refreshToken string) (*models.AuthTokens, error) {
+	claims, err := utils.ParseJWT(refreshToken, s.jwtSecret)
 	if err != nil {
-		return "", "", err
+		return nil, ErrInvalidRefreshToken
 	}
-	if ok == 0 {
-		return "", "", fmt.Errorf("invalid refresh token")
-	}
-	// optionally rotate: delete old and create new
-	_ = s.redis.Del(ctx, key).Err()
-	newRefresh, err := s.createAndStoreRefreshToken(ctx, userUUID)
+
+	userID := claims.UserID
+	storedRefreshToken, err := s.redisClient.Get(ctx, refreshTokenPrefix+userID).Result()
 	if err != nil {
-		return "", "", err
+		if errors.Is(err, redis.Nil) {
+			return nil, ErrInvalidRefreshToken // Token not found or expired in Redis
+		}
+		return nil, fmt.Errorf("failed to get refresh token from Redis: %w", ErrInternal)
 	}
-	access, err := utils.GenerateAccessToken(s.jwtSecret, userUUID, s.accessTTL)
+
+	if storedRefreshToken != refreshToken {
+		return nil, ErrInvalidRefreshToken // Token mismatch
+	}
+
+	// Invalidate the old refresh token immediately
+	s.redisClient.Del(ctx, refreshTokenPrefix+userID)
+
+	// Generate new tokens
+	newTokens, err := s.generateAndStoreTokens(ctx, userID)
 	if err != nil {
-		return "", "", err
+		return nil, fmt.Errorf("failed to generate new tokens: %w", ErrInternal)
 	}
-	return access, newRefresh, nil
+
+	return newTokens, nil
 }
 
-// RegisterWithEmail registers user (email/password) and sends verification email via Brevo.
-func (s *AuthService) RegisterWithEmail(ctx context.Context, email, password string) (*models.User, error) {
-	existing, err := s.repo.FindByEmail(ctx, email)
+// generateAndStoreTokens is a helper to create JWTs and store refresh token in Redis
+func (s *authService) generateAndStoreTokens(ctx context.Context, userID string) (*models.AuthTokens, error) {
+	accessToken, accessExp, err := utils.GenerateAccessToken(userID, s.jwtSecret, s.accessTokenTTLMinutes)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to generate access token: %w", err)
 	}
-	if existing != nil {
-		return nil, fmt.Errorf("email already registered")
-	}
-	hashed, err := utils.HashPassword(password)
+
+	refreshToken, _, err := utils.GenerateRefreshToken(userID, s.jwtSecret, s.refreshTokenTTLDays)
 	if err != nil {
-		return nil, err
-	}
-	u := &models.User{
-		UUID:            uuid.New().String(),
-		Email:           email,
-		PasswordHash:    hashed,
-		IsEmailVerified: false,
-		CreatedAt:       time.Now().UTC(),
-		UpdatedAt:       time.Now().UTC(),
-	}
-	if err := s.repo.Create(ctx, u); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to generate refresh token: %w", err)
 	}
 
-	// create email verification token (short-lived)
-	vToken := uuid.New().String()
-	vKey := fmt.Sprintf("email_verify:%s", vToken)
-	if err := s.redis.Set(ctx, vKey, u.UUID, time.Hour*24).Err(); err != nil {
-		return nil, err
-	}
-
-	// send email via Brevo
-	verifyURL := fmt.Sprintf("https://your-frontend.example.com/verify-email?token=%s", vToken)
-	html := fmt.Sprintf("<p>Welcome! Please verify your email: <a href=\"%s\">Verify Email</a></p>", verifyURL)
-	if err := s.brClient.SendEmail(ctx, email, "Verify your email", html, "Verify your email"); err != nil {
-		return nil, err
-	}
-
-	return u, nil
-}
-
-func (s *AuthService) VerifyEmailToken(ctx context.Context, token string) (*models.User, error) {
-	key := fmt.Sprintf("email_verify:%s", token)
-	uuidVal, err := s.redis.Get(ctx, key).Result()
+	// Store refresh token in Redis
+	refreshTTL := time.Duration(s.refreshTokenTTLDays) * 24 * time.Hour
+	err = s.redisClient.Set(ctx, refreshTokenPrefix+userID, refreshToken, refreshTTL).Err()
 	if err != nil {
-		return nil, fmt.Errorf("invalid or expired token")
+		return nil, fmt.Errorf("failed to store refresh token in Redis: %w", ErrInternal)
 	}
-	u, err := s.repo.FindByUUID(ctx, uuidVal)
-	if err != nil || u == nil {
-		return nil, ErrUserNotFound
-	}
-	u.IsEmailVerified = true
-	if err := s.repo.Update(ctx, u); err != nil {
-		return nil, err
-	}
-	_ = s.redis.Del(ctx, key).Err()
-	return u, nil
+
+	return &models.AuthTokens{
+		AccessToken:  accessToken,
+		RefreshToken: refreshToken,
+		ExpiresAt:    accessExp.Unix(),
+	}, nil
 }
