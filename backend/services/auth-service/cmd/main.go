@@ -92,7 +92,6 @@ func main() {
 	}
 	db := mc.Database(cfg.Mongo.Database)
 
-	// Redis
 	rdb := redis.NewClient(&redis.Options{
 		Addr:     cfg.Redis.Addr,
 		Password: cfg.Redis.Password,
