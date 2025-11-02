@@ -1,81 +1,56 @@
 package brevo
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"time"
-
-	brevosdk "github.com/getbrevo/brevo-go/lib" 
 )
 
-// Client defines the Brevo email client interface
-type Client interface {
-	SendTransactionalEmail(ctx context.Context, toEmail, toName, subject, htmlContent string) error
-	SendVerificationEmail(ctx context.Context, toEmail, toName, verificationCode string) error
+type Client struct {
+	APIKey    string
+	FromEmail string
+	FromName  string
 }
 
-// brevoClient implements the Client interface using Brevo SDK
-type brevoClient struct {
-	apiKey    string
-	fromEmail string
-	fromName  string
-	apiClient *brevosdk.APIClient // This is correct, as APIClient is usually part of the main client struct
-}
-
-// NewClient creates a new Brevo client
-func NewClient(apiKey, fromEmail, fromName string) Client {
-	cfg := brevosdk.NewConfiguration() // Correct: NewConfiguration is a function in the brevosdk package
-	cfg.AddDefaultHeader("api-key", apiKey)
-	cfg.AddDefaultHeader("partner-key", apiKey) // Some Brevo endpoints also use partner-key
-
-	// Configure HTTP client with timeout
-	httpClient := &http.Client{Timeout: 10 * time.Second}
-	cfg.HTTPClient = httpClient
-
-	return &brevoClient{
-		apiKey:    apiKey,
-		fromEmail: fromEmail,
-		fromName:  fromName,
-		apiClient: brevosdk.NewAPIClient(cfg), // Correct
+func NewClient(apiKey, fromEmail, fromName string) *Client {
+	if apiKey == "" {
+		return &Client{}
 	}
+	return &Client{APIKey: apiKey, FromEmail: fromEmail, FromName: fromName}
 }
 
-// SendTransactionalEmail sends a generic transactional email
-func (bc *brevoClient) SendTransactionalEmail(ctx context.Context, toEmail, toName, subject, htmlContent string) error {
-	// Corrected: Refer directly to brevosdk for types
-	sender := brevosdk.SendSmtpEmailSender{
-		Email: bc.fromEmail,
-		Name:  bc.fromName,
-	}
-	to := []brevosdk.SendSmtpEmailTo{{Email: toEmail, Name: toName}}
+type sendEmailReq struct {
+	Sender      map[string]string   `json:"sender"`
+	To          []map[string]string `json:"to"`
+	Subject     string              `json:"subject"`
+	HtmlContent string              `json:"htmlContent"`
+}
 
-	email := brevosdk.SendSmtpEmail{
-		Sender:      &sender,
-		To:          to,
+func (c *Client) SendEmail(ctx context.Context, toEmail, subject, html string) error {
+	if c.APIKey == "" {
+		return nil
+	}
+	req := sendEmailReq{
+		Sender:      map[string]string{"email": c.FromEmail, "name": c.FromName},
+		To:          []map[string]string{{"email": toEmail}},
 		Subject:     subject,
-		HtmlContent: htmlContent,
+		HtmlContent: html,
 	}
-
-	_, _, err := bc.apiClient.TransactionalEmailsApi.SendTransacEmail(ctx, email)
+	b, _ := json.Marshal(req)
+	r, _ := http.NewRequestWithContext(ctx, "POST", "https://api.brevo.com/v3/smtp/email", bytes.NewReader(b))
+	r.Header.Set("api-key", c.APIKey)
+	r.Header.Set("Content-Type", "application/json")
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(r)
 	if err != nil {
-		return fmt.Errorf("failed to send transactional email via Brevo: %w", err)
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		return fmt.Errorf("brevo status %d", resp.StatusCode)
 	}
 	return nil
-}
-
-// SendVerificationEmail sends an email with a verification code.
-func (bc *brevoClient) SendVerificationEmail(ctx context.Context, toEmail, toName, verificationCode string) error {
-	subject := "Verify Your Chat App Email"
-	htmlContent := fmt.Sprintf(`
-		<p>Hello %s,</p>
-		<p>Thank you for registering with Chat App. Please use the following code to verify your email address:</p>
-		<h2>%s</h2>
-		<p>This code is valid for <strong>5 minutes</strong>.</p>
-		<p>If you did not request this, please ignore this email.</p>
-		<p>Best regards,</p>
-		<p>The Chat App Team</p>
-	`, toName, verificationCode)
-
-	return bc.SendTransactionalEmail(ctx, toEmail, toName, subject, htmlContent)
 }
