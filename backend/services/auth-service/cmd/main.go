@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"log" // Using standard log for early errors before zap is set up
 	"os"
 	"os/signal"
 	"syscall"
@@ -15,6 +16,8 @@ import (
 	"github.com/fathima-sithara/auth-service/internal/services"
 	"github.com/fathima-sithara/auth-service/internal/twilio"
 	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v2/middleware/cors" // Added CORS middleware
+	"github.com/joho/godotenv"
 	"github.com/redis/go-redis/v9"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
@@ -22,13 +25,18 @@ import (
 )
 
 func main() {
-	// load config
-	cfg, err := config.Load("config.yaml")
-	if err != nil {
-		panic(fmt.Sprintf("failed to load config: %v", err))
+	// Load .env file
+	if err := godotenv.Load(); err != nil {
+		log.Println("No .env file found, using system environment variables:", err) // Use log for early errors
 	}
 
-	// logger
+	// Load configuration
+	cfg, err := config.Load("config.yaml")
+	if err != nil {
+		log.Fatalf("failed to load config: %v", err) // Use log.Fatalf for critical startup errors
+	}
+
+	// Initialize logger
 	var logger *zap.Logger
 	if cfg.App.Env == "development" {
 		l, _ := zap.NewDevelopment()
@@ -37,86 +45,146 @@ func main() {
 		l, _ := zap.NewProduction()
 		logger = l
 	}
-	defer logger.Sync()
+	defer func() {
+		_ = logger.Sync() // Flushes buffer, if any
+	}()
 	sugar := logger.Sugar()
-	sugar.Infof("starting auth-service on port %d", cfg.App.Port)
+	sugar.Infof("Starting auth-service in %s environment on port %d", cfg.App.Env, cfg.App.Port)
 
-	// mongo connect
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
-	mc, err := mongo.Connect(ctx, options.Client().ApplyURI(cfg.Mongo.URI))
+	// MongoDB Connection
+	ctxMongo, cancelMongo := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancelMongo()
+	mc, err := mongo.Connect(ctxMongo, options.Client().ApplyURI(cfg.Mongo.URI))
 	if err != nil {
-		sugar.Fatalf("mongo connect: %v", err)
+		sugar.Fatalf("MongoDB connect failed: %v", err)
 	}
-	if err := mc.Ping(ctx, nil); err != nil {
-		sugar.Fatalf("mongo ping: %v", err)
+	if err := mc.Ping(ctxMongo, nil); err != nil {
+		sugar.Fatalf("MongoDB ping failed: %v", err)
 	}
 	db := mc.Database(cfg.Mongo.Database)
+	sugar.Info("Successfully connected to MongoDB")
 
-	// redis
+	// Redis Connection
 	rdb := redis.NewClient(&redis.Options{
 		Addr:     cfg.Redis.Addr,
 		Password: cfg.Redis.Password,
 		DB:       cfg.Redis.DB,
 	})
-	if _, err := rdb.Ping(ctx).Result(); err != nil {
-		sugar.Fatalf("redis ping: %v", err)
+	ctxRedis, cancelRedis := context.WithTimeout(context.Background(), 5*time.Second) // Shorter timeout for redis ping
+	defer cancelRedis()
+	if _, err := rdb.Ping(ctxRedis).Result(); err != nil {
+		sugar.Fatalf("Redis ping failed: %v", err)
+	}
+	sugar.Info("Successfully connected to Redis")
+
+	// Initialize external clients
+	tw := twilio.NewClient(cfg.Twilio.AccountSID, cfg.Twilio.AuthToken, cfg.Twilio.From)
+	if !tw.IsConfigured() {
+		sugar.Warn("Twilio client not fully configured. SMS functionality will be skipped.")
+	} else {
+		sugar.Info("Twilio client configured.")
 	}
 
-	// clients
-	tw := twilio.NewClient(cfg.Twilio.AccountSID, cfg.Twilio.AuthToken, cfg.Twilio.From)
 	br := brevo.NewClient(cfg.Brevo.APIKey, cfg.Brevo.FromEmail, cfg.Brevo.FromName)
+	if !br.IsConfigured() {
+		sugar.Warn("Brevo client not fully configured. Email functionality will be skipped.")
+	} else {
+		sugar.Info("Brevo client configured.")
+	}
 
-	// repo / service / handler
+	// Initialize repository, service, and handler
 	userRepo := repository.NewMongoUserRepo(db, cfg.User.Collection)
-	authSvc := services.NewAuthService(userRepo, tw, br, rdb, cfg.App.JWT.Secret, cfg.App.JWT.AccessTTLMinutes, cfg.App.JWT.RefreshTTLDays, cfg.Security.OtpTTLMinutes, cfg.Security.OtpRateLimitPerPhonePerHour)
+	authSvc := services.NewAuthService(userRepo, tw, br, rdb, cfg.App.JWT.Secret, cfg.App.JWT.AccessTTLMinutes, cfg.App.JWT.RefreshTTLDays, cfg.Security.OtpTTLMinutes, cfg.Security.OtpRateLimitPerPhonePerHour, logger)
 	h := handlers.NewHandler(authSvc, logger)
 
-	// fiber app
+	// Initialize Fiber app
 	app := fiber.New(fiber.Config{
 		ReadTimeout:  cfg.App.ReadTimeout,
 		WriteTimeout: cfg.App.WriteTimeout,
+		IdleTimeout:  cfg.App.IdleTimeout, // Added idle timeout
 	})
 
-	// simple zap logging middleware
+	// Global Middlewares
+	app.Use(cors.New()) // Enable CORS for development/production needs
+
+	// Simple Zap logging middleware
 	app.Use(func(c *fiber.Ctx) error {
 		start := time.Now()
 		err := c.Next()
 		latency := time.Since(start)
-		logger.Info("request",
+		status := c.Response().StatusCode()
+		if err != nil {
+			// If an error occurred in a handler, Fiber might set the status code
+			// but we also want to log the error itself.
+			logger.Error("HTTP Request Error",
+				zap.String("method", c.Method()),
+				zap.String("path", c.Path()),
+				zap.String("ip", c.IP()),
+				zap.Int("status", status),
+				zap.Duration("latency", latency),
+				zap.Error(err),
+			)
+			return err // Re-propagate the error for Fiber's error handler
+		}
+		logger.Info("HTTP Request",
 			zap.String("method", c.Method()),
 			zap.String("path", c.Path()),
 			zap.String("ip", c.IP()),
-			zap.Int("status", c.Response().StatusCode()),
+			zap.Int("status", status),
 			zap.Duration("latency", latency),
 		)
-		return err
+		return nil
 	})
 
+	// API Routes
 	api := app.Group("/api/v1")
 	auth := api.Group("/auth")
+
+	// OTP based authentication
 	auth.Post("/otp/request", h.RequestOTP)
 	auth.Post("/otp/verify", h.VerifyOTP)
-	auth.Post("/register/email", h.RegisterEmail)
-	auth.Post("/verify/email", h.VerifyEmail)
+
+	// Email-based registration/verification (with password)
+	auth.Post("/register/email", h.RegisterEmail)           // Request email OTP (for initial verification or password reset scenario)
+	auth.Post("/verify/email", h.VerifyEmail)               // Verify email OTP & create/login user (without password)
+	auth.Post("/register/password", h.RegisterWithPassword) // Register with email and password
+	auth.Post("/login/password", h.LoginWithPassword)       // Login with email and password
+
+	// Token management
 	auth.Post("/token/refresh", h.Refresh)
 
-	// start server
+	// Start server
 	go func() {
-		if err := app.Listen(fmt.Sprintf(":%d", cfg.App.Port)); err != nil {
-			sugar.Fatalf("server failed: %v", err)
+		listenAddr := fmt.Sprintf(":%d", cfg.App.Port)
+		sugar.Infof("Server listening on %s", listenAddr)
+		if err := app.Listen(listenAddr); err != nil {
+			sugar.Fatalf("Server failed to start: %v", err)
 		}
 	}()
 
-	// graceful shutdown
+	// Graceful shutdown
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, os.Interrupt, syscall.SIGTERM)
 	<-quit
-	sugar.Info("shutting down...")
-	ctxShut, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	_ = app.Shutdown()
-	_ = mc.Disconnect(ctxShut)
-	_ = rdb.Close()
-	sugar.Info("graceful shutdown complete")
+	sugar.Info("Shutting down server...")
+
+	ctxShut, cancelShut := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancelShut()
+
+	// Shutdown Fiber app
+	if err := app.ShutdownWithContext(ctxShut); err != nil {
+		sugar.Errorf("Fiber app shutdown error: %v", err)
+	}
+
+	// Disconnect MongoDB
+	if err := mc.Disconnect(ctxShut); err != nil {
+		sugar.Errorf("MongoDB disconnect error: %v", err)
+	}
+
+	// Close Redis connection
+	if err := rdb.Close(); err != nil {
+		sugar.Errorf("Redis client close error: %v", err)
+	}
+
+	sugar.Info("Graceful shutdown complete. Goodbye!")
 }

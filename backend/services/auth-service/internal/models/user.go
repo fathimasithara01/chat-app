@@ -1,19 +1,20 @@
-    package models
+package models
 
-    import (
-        "time"
+import (
+	"time"
 
-        "go.mongodb.org/mongo-driver/bson/primitive"
-    )
+	"go.mongodb.org/mongo-driver/bson/primitive"
+)
 
-    type User struct {
-        ID               primitive.ObjectID `bson:"_id,omitempty" json:"id"`
-        Name             string             `bson:"name,omitempty" json:"name,omitempty"`
-        Phone            string             `bson:"phone,omitempty" json:"phone,omitempty"`
-        Email            string             `bson:"email,omitempty" json:"email,omitempty"`
-        PasswordHash     string             `bson:"password_hash,omitempty" json:"-"`
-        RefreshTokenHash string             `bson:"refresh_token_hash,omitempty" json:"-"`
-        Verified         bool               `bson:"verified" json:"verified"`
-        CreatedAt        time.Time          `bson:"created_at" json:"created_at"`
-        UpdatedAt        time.Time          `bson:"updated_at" json:"updated_at"`
-    }
+// User represents a user in the authentication system.
+type User struct {
+	ID               primitive.ObjectID `bson:"_id,omitempty" json:"id"`
+	Username         string             `bson:"username,omitempty" json:"username,omitempty"` // Added for chat app
+	Phone            string             `bson:"phone,omitempty" json:"phone,omitempty"`
+	Email            string             `bson:"email,omitempty" json:"email,omitempty"`
+	PasswordHash     string             `bson:"password_hash,omitempty" json:"-"`            // Stored hashed password
+	RefreshTokenHash string             `bson:"refresh_token_hash,omitempty" json:"-"`       // Stored hashed refresh token
+	Verified         bool               `bson:"verified" json:"verified"`                    // Indicates if phone/email is verified
+	CreatedAt        time.Time          `bson:"created_at" json:"created_at"`
+	UpdatedAt        time.Time          `bson:"updated_at" json:"updated_at"`
+}

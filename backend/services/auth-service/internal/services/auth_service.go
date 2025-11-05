@@ -14,187 +14,464 @@ import (
 	"github.com/fathima-sithara/auth-service/internal/twilio"
 	"github.com/fathima-sithara/auth-service/internal/utils"
 	"github.com/redis/go-redis/v9"
+	"go.uber.org/zap"
+	"golang.org/x/crypto/bcrypt" // For password hashing
 )
 
 var (
-	ErrInvalidOTP      = errors.New("invalid or expired otp")
-	ErrTooManyRequests = errors.New("too many otp requests, try later")
+	ErrInvalidOTP          = errors.New("invalid or expired OTP")
+	ErrTooManyRequests     = errors.New("too many OTP requests, please try again later")
+	ErrUserAlreadyExists   = errors.New("user with this email or username already exists")
+	ErrInvalidCredentials  = errors.New("invalid email or password")
+	ErrInvalidRefreshToken = errors.New("invalid refresh token")
+	ErrUserNotVerified     = errors.New("user not verified")
+	ErrUserNotFound        = errors.New("user not found") // Propagate repository error more cleanly
 )
 
+// AuthService manages user authentication and authorization logic.
 type AuthService struct {
-	userRepo     repository.UserRepository
-	tw           *twilio.Client
-	br           *brevo.Client
-	redis        *redis.Client
-	jm           *utils.JWTManager
-	otpTTL       time.Duration
-	otpRateLimit int
+	userRepo         repository.UserRepository
+	tw               *twilio.Client
+	br               *brevo.Client
+	redis            *redis.Client
+	jm               *utils.JWTManager
+	otpTTL           time.Duration
+	otpRateLimit     int
+	passwordHashCost int // New field for bcrypt cost
+	log              *zap.Logger
 }
 
-func NewAuthService(userRepo repository.UserRepository, tw *twilio.Client, br *brevo.Client, rdb *redis.Client, jwtSecret string, accessMins int, refreshDays int, otpTTLMin int, rateLimit int) *AuthService {
+// NewAuthService creates and returns a new AuthService instance.
+func NewAuthService(userRepo repository.UserRepository, tw *twilio.Client, br *brevo.Client, rdb *redis.Client, jwtSecret string, accessMins int, refreshDays int, otpTTLMin int, rateLimit int, logger *zap.Logger) *AuthService {
+	// Default bcrypt cost, can be made configurable
+	const defaultPasswordHashCost = bcrypt.DefaultCost
 	return &AuthService{
-		userRepo:     userRepo,
-		tw:           tw,
-		br:           br,
-		redis:        rdb,
-		jm:           utils.NewJWTManager(jwtSecret, accessMins, refreshDays),
-		otpTTL:       time.Duration(otpTTLMin) * time.Minute,
-		otpRateLimit: rateLimit,
+		userRepo:         userRepo,
+		tw:               tw,
+		br:               br,
+		redis:            rdb,
+		jm:               utils.NewJWTManager(jwtSecret, accessMins, refreshDays),
+		otpTTL:           time.Duration(otpTTLMin) * time.Minute,
+		otpRateLimit:     rateLimit,
+		passwordHashCost: defaultPasswordHashCost,
+		log:              logger,
 	}
 }
 
+// RefreshToken validates a refresh token and issues new access and refresh tokens.
 func (s *AuthService) RefreshToken(ctx context.Context, refreshToken string) (string, string, error) {
-	// Parse refresh token to extract userID
 	userID, err := s.jm.ParseRefresh(refreshToken)
 	if err != nil {
-		return "", "", fmt.Errorf("invalid refresh token")
+		s.log.Warn("Failed to parse refresh token", zap.Error(err))
+		return "", "", ErrInvalidRefreshToken
 	}
 
-	// Generate new Access Token
+	user, err := s.userRepo.FindByID(ctx, userID)
+	if err != nil {
+		s.log.Error("Failed to find user by ID during refresh", zap.Error(err), zap.String("userID", userID))
+		if errors.Is(err, repository.ErrUserNotFound) {
+			return "", "", ErrInvalidRefreshToken // User might have been deleted
+		}
+		return "", "", fmt.Errorf("database error: %w", err)
+	}
+
+	// Validate refresh token hash against stored hash
+	providedTokenHash := sha256.Sum256([]byte(refreshToken))
+	if user.RefreshTokenHash == "" || user.RefreshTokenHash != hex.EncodeToString(providedTokenHash[:]) {
+		s.log.Warn("Provided refresh token hash does not match stored hash",
+			zap.String("userID", userID),
+			zap.String("storedHash", user.RefreshTokenHash),
+			zap.String("providedHash", hex.EncodeToString(providedTokenHash[:])),
+		)
+		return "", "", ErrInvalidRefreshToken
+	}
+
 	access, _, err := s.jm.GenerateAccess(userID)
 	if err != nil {
-		return "", "", err
+		s.log.Error("Failed to generate access token during refresh", zap.Error(err), zap.String("userID", userID))
+		return "", "", fmt.Errorf("failed to generate access token: %w", err)
 	}
 
-	// Generate new Refresh Token
 	refresh, _, err := s.jm.GenerateRefresh(userID)
 	if err != nil {
-		return "", "", err
+		s.log.Error("Failed to generate new refresh token during refresh", zap.Error(err), zap.String("userID", userID))
+		return "", "", fmt.Errorf("failed to generate refresh token: %w", err)
 	}
 
-	// Hash refresh token before saving in DB
-	h := sha256.Sum256([]byte(refresh))
-	rhash := hex.EncodeToString(h[:])
-	if err := s.userRepo.SetRefreshTokenHash(ctx, userID, rhash); err != nil {
-		return "", "", err
+	newRefreshTokenHash := sha256.Sum256([]byte(refresh))
+	if err := s.userRepo.SetRefreshTokenHash(ctx, userID, hex.EncodeToString(newRefreshTokenHash[:])); err != nil {
+		s.log.Error("Failed to set new refresh token hash", zap.Error(err), zap.String("userID", userID))
+		return "", "", fmt.Errorf("failed to update refresh token: %w", err)
 	}
 
 	return access, refresh, nil
 }
 
+// genOTP generates a 6-digit random OTP.
 func (s *AuthService) genOTP() string {
-	// simple 6-digit random (time-based) — good enough for OTP
+	// A simple time-based approach for OTP generation is common for quick demos/prototypes.
+	// For production, consider cryptographically secure random number generators for OTPs.
 	t := time.Now().UnixNano()
 	v := (t % 1000000)
 	return fmt.Sprintf("%06d", v)
 }
 
+// RequestOTP generates and sends an OTP to the given phone number.
+// It includes rate limiting.
 func (s *AuthService) RequestOTP(ctx context.Context, phone string) error {
-	rlKey := fmt.Sprintf("otp:rl:%s", phone)
-	cnt, _ := s.redis.Get(ctx, rlKey).Int()
+	rlKey := fmt.Sprintf("otp:rl:%s", phone) // Rate limit key
+	cnt, err := s.redis.Get(ctx, rlKey).Int()
+	if err != nil && !errors.Is(err, redis.Nil) {
+		s.log.Error("Failed to get OTP rate limit from Redis", zap.Error(err), zap.String("phone", phone))
+		// Continue even on redis error for first attempt, but log it.
+	}
+
 	if cnt >= s.otpRateLimit && s.otpRateLimit > 0 {
 		return ErrTooManyRequests
 	}
 
 	otp := s.genOTP()
-	otpKey := fmt.Sprintf("otp:%s", phone)
+	otpKey := fmt.Sprintf("otp:%s", phone) // OTP storage key
+
+	// Store OTP in Redis with a TTL
 	if err := s.redis.Set(ctx, otpKey, otp, s.otpTTL).Err(); err != nil {
-		return err
+		s.log.Error("Failed to set OTP in Redis", zap.Error(err), zap.String("phone", phone))
+		return fmt.Errorf("failed to store OTP: %w", err)
 	}
 
-	// rate-limit counter (1 hour)
-	if err := s.redis.Incr(ctx, rlKey).Err(); err == nil {
-		s.redis.Expire(ctx, rlKey, time.Hour)
+	// Increment rate-limit counter and set expiry for 1 hour
+	if err := s.redis.Incr(ctx, rlKey).Err(); err != nil {
+		s.log.Error("Failed to increment OTP rate limit in Redis", zap.Error(err), zap.String("phone", phone))
+	}
+	if err := s.redis.Expire(ctx, rlKey, time.Hour).Err(); err != nil {
+		s.log.Error("Failed to set expiry for OTP rate limit in Redis", zap.Error(err), zap.String("phone", phone))
 	}
 
-	// dispatch SMS via Twilio (noop if not configured)
-	if s.tw != nil {
+	// Dispatch SMS via Twilio
+	if s.tw.IsConfigured() {
 		body := fmt.Sprintf("Your verification code: %s", otp)
-		_ = s.tw.SendSMS(ctx, phone, body)
+		if err := s.tw.SendSMS(ctx, phone, body); err != nil {
+			s.log.Error("Failed to send OTP SMS via Twilio", zap.Error(err), zap.String("phone", phone))
+			return fmt.Errorf("failed to send SMS: %w", err)
+		}
+		s.log.Info("OTP SMS sent", zap.String("phone", phone))
+	} else {
+		s.log.Warn("Twilio client not configured, OTP SMS for phone will not be sent", zap.String("phone", phone))
+		// In development, you might print the OTP for debugging
+		if s.log.Core().Enabled(zap.DebugLevel) { // Only in debug mode
+			s.log.Debug("DEBUG: OTP for phone", zap.String("phone", phone), zap.String("otp", otp))
+		}
 	}
 	return nil
 }
 
+// VerifyOTP verifies the provided OTP for a phone number and handles user registration/login.
 func (s *AuthService) VerifyOTP(ctx context.Context, phone, otp string) (string, string, error) {
 	otpKey := fmt.Sprintf("otp:%s", phone)
-	v, err := s.redis.Get(ctx, otpKey).Result()
-	if err != nil || v != otp {
+	storedOTP, err := s.redis.Get(ctx, otpKey).Result()
+	if err != nil {
+		s.log.Warn("Failed to retrieve OTP from Redis or OTP expired", zap.Error(err), zap.String("phone", phone))
 		return "", "", ErrInvalidOTP
 	}
-	_ = s.redis.Del(ctx, otpKey)
+	if storedOTP != otp {
+		s.log.Warn("Invalid OTP provided for phone", zap.String("phone", phone))
+		return "", "", ErrInvalidOTP
+	}
 
-	// find or create user
+	// OTP is valid, delete it from Redis
+	if err := s.redis.Del(ctx, otpKey).Err(); err != nil {
+		s.log.Error("Failed to delete OTP from Redis after verification", zap.Error(err), zap.String("phone", phone))
+		// Log but don't fail, as the user is already authenticated.
+	}
+
+	// Find or create user by phone
 	u, err := s.userRepo.FindByPhone(ctx, phone)
-	if err == repository.ErrUserNotFound {
-		newU := &models.User{
-			Phone:     phone,
-			Verified:  true,
-			CreatedAt: time.Now().UTC(),
-			UpdatedAt: time.Now().UTC(),
+	if err != nil {
+		if errors.Is(err, repository.ErrUserNotFound) {
+			// User not found, create a new one
+			newU := &models.User{
+				Phone:    phone,
+				Verified: true,
+			}
+			if err := s.userRepo.Create(ctx, newU); err != nil {
+				s.log.Error("Failed to create new user on OTP verification", zap.Error(err), zap.String("phone", phone))
+				return "", "", fmt.Errorf("failed to create user: %w", err)
+			}
+			u = newU // Use the newly created user object
+		} else {
+			s.log.Error("Failed to find user by phone during OTP verification", zap.Error(err), zap.String("phone", phone))
+			return "", "", fmt.Errorf("database error: %w", err)
 		}
-		if err := s.userRepo.Create(ctx, newU); err != nil {
-			return "", "", err
+	}
+
+	// Ensure user is marked as verified
+	if !u.Verified {
+		u.Verified = true
+		if err := s.userRepo.Update(ctx, u); err != nil {
+			s.log.Error("Failed to update user verification status after OTP", zap.Error(err), zap.String("phone", phone), zap.String("userID", u.ID.Hex()))
+			// This might not be a fatal error, but important to log.
 		}
-		u, _ = s.userRepo.FindByPhone(ctx, phone)
-	} else if err != nil {
-		return "", "", err
 	}
 
 	uid := u.ID.Hex()
 	access, _, err := s.jm.GenerateAccess(uid)
 	if err != nil {
-		return "", "", err
+		s.log.Error("Failed to generate access token for user after OTP verification", zap.Error(err), zap.String("userID", uid))
+		return "", "", fmt.Errorf("failed to generate access token: %w", err)
 	}
 	refresh, _, err := s.jm.GenerateRefresh(uid)
 	if err != nil {
-		return "", "", err
+		s.log.Error("Failed to generate refresh token for user after OTP verification", zap.Error(err), zap.String("userID", uid))
+		return "", "", fmt.Errorf("failed to generate refresh token: %w", err)
 	}
 
-	// store hashed refresh
-	h := sha256.Sum256([]byte(refresh))
-	rhash := hex.EncodeToString(h[:])
-	_ = s.userRepo.SetRefreshTokenHash(ctx, uid, rhash)
+	// Store hashed refresh token in DB
+	refreshHash := sha256.Sum256([]byte(refresh))
+	if err := s.userRepo.SetRefreshTokenHash(ctx, uid, hex.EncodeToString(refreshHash[:])); err != nil {
+		s.log.Error("Failed to set refresh token hash after OTP verification", zap.Error(err), zap.String("userID", uid))
+		// Not critical to fail login, but refresh token might not persist.
+	}
 	return access, refresh, nil
 }
 
+// RegisterEmail sends an email with an OTP for verification.
+// This is typically used for a passwordless email login/registration flow.
 func (s *AuthService) RegisterEmail(ctx context.Context, email string) error {
-	otp := s.genOTP()
-	key := "emailotp:" + email
-	if err := s.redis.Set(ctx, key, otp, s.otpTTL).Err(); err != nil {
-		return err
+	// Check rate limit for email OTP
+	rlKey := fmt.Sprintf("emailotp:rl:%s", email)
+	cnt, err := s.redis.Get(ctx, rlKey).Int()
+	if err != nil && !errors.Is(err, redis.Nil) {
+		s.log.Error("Failed to get email OTP rate limit from Redis", zap.Error(err), zap.String("email", email))
 	}
-	if s.br != nil && s.br.APIKey != "" {
+	if cnt >= s.otpRateLimit && s.otpRateLimit > 0 {
+		return ErrTooManyRequests
+	}
+
+	otp := s.genOTP()
+	emailOtpKey := fmt.Sprintf("emailotp:%s", email)
+
+	if err := s.redis.Set(ctx, emailOtpKey, otp, s.otpTTL).Err(); err != nil {
+		s.log.Error("Failed to set email OTP in Redis", zap.Error(err), zap.String("email", email))
+		return fmt.Errorf("failed to store email OTP: %w", err)
+	}
+
+	// Increment rate-limit counter and set expiry for 1 hour
+	if err := s.redis.Incr(ctx, rlKey).Err(); err != nil {
+		s.log.Error("Failed to increment email OTP rate limit in Redis", zap.Error(err), zap.String("email", email))
+	}
+	if err := s.redis.Expire(ctx, rlKey, time.Hour).Err(); err != nil {
+		s.log.Error("Failed to set expiry for email OTP rate limit in Redis", zap.Error(err), zap.String("email", email))
+	}
+
+	if s.br.IsConfigured() {
 		subj := "Your verification code"
-		html := "<p>Your verification code is <b>" + otp + "</b></p>"
-		_ = s.br.SendEmail(ctx, email, subj, html)
+		html := fmt.Sprintf("<p>Your verification code is <b>%s</b>. It is valid for %d minutes.</p>", otp, int(s.otpTTL.Minutes()))
+		if err := s.br.SendEmail(ctx, email, subj, html); err != nil {
+			s.log.Error("Failed to send email OTP via Brevo", zap.Error(err), zap.String("email", email))
+			return fmt.Errorf("failed to send email: %w", err)
+		}
+		s.log.Info("OTP email sent", zap.String("email", email))
+	} else {
+		s.log.Warn("Brevo client not configured, OTP email for email will not be sent", zap.String("email", email))
+		if s.log.Core().Enabled(zap.DebugLevel) {
+			s.log.Debug("DEBUG: OTP for email", zap.String("email", email), zap.String("otp", otp))
+		}
 	}
 	return nil
 }
 
+// VerifyEmail verifies the provided email OTP and handles user registration/login.
 func (s *AuthService) VerifyEmail(ctx context.Context, email, otp string) (string, string, error) {
-	key := "emailotp:" + email
-	v, err := s.redis.Get(ctx, key).Result()
-	if err != nil || v != otp {
+	emailOtpKey := fmt.Sprintf("emailotp:%s", email)
+	storedOTP, err := s.redis.Get(ctx, emailOtpKey).Result()
+	if err != nil {
+		s.log.Warn("Failed to retrieve email OTP from Redis or OTP expired", zap.Error(err), zap.String("email", email))
 		return "", "", ErrInvalidOTP
 	}
-	_ = s.redis.Del(ctx, key)
+	if storedOTP != otp {
+		s.log.Warn("Invalid OTP provided for email", zap.String("email", email))
+		return "", "", ErrInvalidOTP
+	}
 
+	// OTP is valid, delete it from Redis
+	if err := s.redis.Del(ctx, emailOtpKey).Err(); err != nil {
+		s.log.Error("Failed to delete email OTP from Redis after verification", zap.Error(err), zap.String("email", email))
+	}
+
+	// Find or create user by email
 	u, err := s.userRepo.FindByEmail(ctx, email)
-	if err == repository.ErrUserNotFound {
-		newU := &models.User{
-			Email:     email,
-			Verified:  true,
-			CreatedAt: time.Now().UTC(),
-			UpdatedAt: time.Now().UTC(),
+	if err != nil {
+		if errors.Is(err, repository.ErrUserNotFound) {
+			// User not found, create a new one
+			newU := &models.User{
+				Email:    email,
+				Verified: true,
+			}
+			if err := s.userRepo.Create(ctx, newU); err != nil {
+				s.log.Error("Failed to create new user on email OTP verification", zap.Error(err), zap.String("email", email))
+				return "", "", fmt.Errorf("failed to create user: %w", err)
+			}
+			u = newU // Use the newly created user object
+		} else {
+			s.log.Error("Failed to find user by email during email OTP verification", zap.Error(err), zap.String("email", email))
+			return "", "", fmt.Errorf("database error: %w", err)
 		}
-		if err := s.userRepo.Create(ctx, newU); err != nil {
-			return "", "", err
+	}
+
+	// Ensure user is marked as verified
+	if !u.Verified {
+		u.Verified = true
+		if err := s.userRepo.Update(ctx, u); err != nil {
+			s.log.Error("Failed to update user email verification status after OTP", zap.Error(err), zap.String("email", email), zap.String("userID", u.ID.Hex()))
 		}
-		u, _ = s.userRepo.FindByEmail(ctx, email)
-	} else if err != nil {
-		return "", "", err
 	}
 
 	uid := u.ID.Hex()
 	access, _, err := s.jm.GenerateAccess(uid)
 	if err != nil {
-		return "", "", err
+		s.log.Error("Failed to generate access token for email user after OTP verification", zap.Error(err), zap.String("userID", uid))
+		return "", "", fmt.Errorf("failed to generate access token: %w", err)
 	}
 	refresh, _, err := s.jm.GenerateRefresh(uid)
 	if err != nil {
-		return "", "", err
+		s.log.Error("Failed to generate refresh token for email user after OTP verification", zap.Error(err), zap.String("userID", uid))
+		return "", "", fmt.Errorf("failed to generate refresh token: %w", err)
 	}
-	h := sha256.Sum256([]byte(refresh))
-	_ = s.userRepo.SetRefreshTokenHash(ctx, uid, hex.EncodeToString(h[:]))
+
+	// Store hashed refresh token
+	refreshHash := sha256.Sum256([]byte(refresh))
+	if err := s.userRepo.SetRefreshTokenHash(ctx, uid, hex.EncodeToString(refreshHash[:])); err != nil {
+		s.log.Error("Failed to set refresh token hash for email user after OTP verification", zap.Error(err), zap.String("userID", uid))
+	}
 	return access, refresh, nil
+}
+
+// RegisterWithPassword registers a new user with a username, email, and password.
+func (s *AuthService) RegisterWithPassword(ctx context.Context, username, email, password string) (string, string, error) {
+	// Check if a user with this email or username already exists
+	_, errEmail := s.userRepo.FindByEmail(ctx, email)
+	_, errUsername := s.userRepo.FindByUsername(ctx, username)
+
+	if errEmail == nil || errUsername == nil { // If no error, user exists
+		return "", "", ErrUserAlreadyExists
+	}
+	// If errors are repository.ErrUserNotFound, then it's fine.
+	if errEmail != nil && !errors.Is(errEmail, repository.ErrUserNotFound) {
+		s.log.Error("Database error while checking for existing email", zap.Error(errEmail), zap.String("email", email))
+		return "", "", fmt.Errorf("database error: %w", errEmail)
+	}
+	if errUsername != nil && !errors.Is(errUsername, repository.ErrUserNotFound) {
+		s.log.Error("Database error while checking for existing username", zap.Error(errUsername), zap.String("username", username))
+		return "", "", fmt.Errorf("database error: %w", errUsername)
+	}
+
+	// Hash the password
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(password), s.passwordHashCost)
+	if err != nil {
+		s.log.Error("Failed to hash password", zap.Error(err))
+		return "", "", fmt.Errorf("failed to hash password: %w", err)
+	}
+
+	newUser := &models.User{
+		Username:     username,
+		Email:        email,
+		PasswordHash: string(hashedPassword),
+		Verified:     true, // Mark as verified if using email/password as primary authentication
+	}
+
+	if err := s.userRepo.Create(ctx, newUser); err != nil {
+		if errors.Is(err, repository.ErrDuplicateKey) {
+			return "", "", ErrUserAlreadyExists
+		}
+		s.log.Error("Failed to create new user with password", zap.Error(err), zap.String("email", email), zap.String("username", username))
+		return "", "", fmt.Errorf("failed to register user: %w", err)
+	}
+
+	uid := newUser.ID.Hex()
+	access, _, err := s.jm.GenerateAccess(uid)
+	if err != nil {
+		s.log.Error("Failed to generate access token after password registration", zap.Error(err), zap.String("userID", uid))
+		return "", "", fmt.Errorf("failed to generate access token: %w", err)
+	}
+	refresh, _, err := s.jm.GenerateRefresh(uid)
+	if err != nil {
+		s.log.Error("Failed to generate refresh token after password registration", zap.Error(err), zap.String("userID", uid))
+		return "", "", fmt.Errorf("failed to generate refresh token: %w", err)
+	}
+
+	refreshHash := sha256.Sum256([]byte(refresh))
+	if err := s.userRepo.SetRefreshTokenHash(ctx, uid, hex.EncodeToString(refreshHash[:])); err != nil {
+		s.log.Error("Failed to set refresh token hash after password registration", zap.Error(err), zap.String("userID", uid))
+	}
+
+	return access, refresh, nil
+}
+
+// LoginWithPassword authenticates a user with their email and password.
+func (s *AuthService) LoginWithPassword(ctx context.Context, email, password string) (string, string, error) {
+	user, err := s.userRepo.FindByEmail(ctx, email)
+	if err != nil {
+		s.log.Warn("Attempted login with non-existent email", zap.String("email", email))
+		return "", "", ErrInvalidCredentials
+	}
+
+	// Compare provided password with stored hash
+	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(password)); err != nil {
+		s.log.Warn("Failed password comparison for user", zap.String("email", email), zap.String("userID", user.ID.Hex()))
+		return "", "", ErrInvalidCredentials
+	}
+
+	// Optionally, check if user is verified (if separate verification step is needed)
+	// if !user.Verified {
+	// 	return "", "", ErrUserNotVerified
+	// }
+
+	uid := user.ID.Hex()
+	access, _, err := s.jm.GenerateAccess(uid)
+	if err != nil {
+		s.log.Error("Failed to generate access token after password login", zap.Error(err), zap.String("userID", uid))
+		return "", "", fmt.Errorf("failed to generate access token: %w", err)
+	}
+	refresh, _, err := s.jm.GenerateRefresh(uid)
+	if err != nil {
+		s.log.Error("Failed to generate refresh token after password login", zap.Error(err), zap.String("userID", uid))
+		return "", "", fmt.Errorf("failed to generate refresh token: %w", err)
+	}
+
+	refreshHash := sha256.Sum256([]byte(refresh))
+	if err := s.userRepo.SetRefreshTokenHash(ctx, uid, hex.EncodeToString(refreshHash[:])); err != nil {
+		s.log.Error("Failed to set refresh token hash after password login", zap.Error(err), zap.String("userID", uid))
+	}
+
+	return access, refresh, nil
+}
+
+// ChangePassword allows a user to update their password.
+// This would typically be a protected route, requiring an access token.
+func (s *AuthService) ChangePassword(ctx context.Context, userID, oldPassword, newPassword string) error {
+	user, err := s.userRepo.FindByID(ctx, userID)
+	if err != nil {
+		s.log.Error("User not found for password change", zap.Error(err), zap.String("userID", userID))
+		return ErrUserNotFound
+	}
+
+	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(oldPassword)); err != nil {
+		s.log.Warn("Old password mismatch during password change", zap.String("userID", userID))
+		return ErrInvalidCredentials // "Old password is incorrect"
+	}
+
+	hashedNewPassword, err := bcrypt.GenerateFromPassword([]byte(newPassword), s.passwordHashCost)
+	if err != nil {
+		s.log.Error("Failed to hash new password", zap.Error(err), zap.String("userID", userID))
+		return fmt.Errorf("failed to hash new password: %w", err)
+	}
+
+	user.PasswordHash = string(hashedNewPassword)
+	if err := s.userRepo.Update(ctx, user); err != nil {
+		s.log.Error("Failed to update user's password in DB", zap.Error(err), zap.String("userID", userID))
+		return fmt.Errorf("failed to update password: %w", err)
+	}
+
+	s.log.Info("User password changed successfully", zap.String("userID", userID))
+	return nil
 }

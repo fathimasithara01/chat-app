@@ -1,34 +1,58 @@
 package config
 
 import (
-	"log"
+	"github.com/joho/godotenv"
 	"github.com/spf13/viper"
 )
 
-type Config struct {
-	Server struct {
-		Port string
-	}
-	MongoDB struct {
-		URI        string
-		Database   string
-		Collection string
+type AppConfig struct {
+	Env  string
+	Port int
+	JWT  struct {
+		Secret           string
+		AccessTTLMinutes int
+		RefreshTTLDays   int
 	}
 }
 
-func LoadConfig() *Config {
-	viper.SetConfigName("config")
-	viper.SetConfigType("yaml")
-	viper.AddConfigPath(".")
+type MongoConfig struct {
+	URI      string
+	Database string
+}
 
+type UserConfig struct {
+	Collection string
+}
+
+type Config struct {
+	App   AppConfig
+	Mongo MongoConfig
+	User  UserConfig
+}
+
+func LoadConfig(path string) (*Config, error) {
+	viper.SetConfigFile(path)
 	if err := viper.ReadInConfig(); err != nil {
-		log.Fatalf("Error reading config: %v", err)
+		return nil, err
 	}
 
-	var cfg Config
-	if err := viper.Unmarshal(&cfg); err != nil {
-		log.Fatalf("Unable to decode config: %v", err)
+	_ = godotenv.Load()
+	viper.AutomaticEnv()
+
+	cfg := &Config{}
+	if err := viper.Unmarshal(cfg); err != nil {
+		return nil, err
 	}
 
-	return &cfg
+	if secret := viper.GetString("JWT_SECRET"); secret != "" {
+		cfg.App.JWT.Secret = secret
+	}
+	if viper.GetString("JWT_ACCESS_TTL_MINUTES") != "" {
+		cfg.App.JWT.AccessTTLMinutes = viper.GetInt("JWT_ACCESS_TTL_MINUTES")
+	}
+	if viper.GetString("JWT_REFRESH_TTL_DAYS") != "" {
+		cfg.App.JWT.RefreshTTLDays = viper.GetInt("JWT_REFRESH_TTL_DAYS")
+	}
+
+	return cfg, nil
 }
