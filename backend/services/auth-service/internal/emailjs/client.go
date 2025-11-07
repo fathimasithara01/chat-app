@@ -61,6 +61,8 @@ func (c *Client) SendEmail(ctx context.Context, toEmail, otp string) error {
 		AccessToken: c.PrivateKey,
 
 		TemplateParams: map[string]string{
+			"user":       "username",
+			"app_name":   "ChatApp",
 			"user_email": toEmail,
 			"otp":        otp,
 			"time":       "15 minutes",

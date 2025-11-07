@@ -73,7 +73,6 @@ type Config struct {
 func Load(path string) (*Config, error) {
 	_ = godotenv.Load()
 
-	// Read YAML
 	b, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read config file: %w", err)

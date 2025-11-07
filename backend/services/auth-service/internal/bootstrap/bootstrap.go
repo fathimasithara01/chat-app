@@ -30,7 +30,7 @@ type AppContext struct {
 type CleanupFn func(context.Context)
 
 func Init() (*AppContext, CleanupFn, error) {
-	cfg, err := config.Load("config.yaml")
+	cfg, err := config.Load("internal/config/config.yaml")
 	if err != nil {
 		return nil, nil, err
 	}
