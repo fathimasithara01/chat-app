@@ -135,8 +135,7 @@ func (j *JWTManager) ParseRefresh(tokenStr string) (string, error) {
 	return customClaims.UserID, nil
 }
 
-// ExtractUserID extracts the UserID from a validated access token.
-// This is primarily for use in middleware after a token has been verified.
+//
 func (j *JWTManager) ExtractUserID(tokenStr string) (string, error) {
 	customClaims, err := j.Verify(tokenStr)
 	if err != nil {

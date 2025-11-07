@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/fathima-sithara/auth-service/internal/config"
+	"github.com/fathima-sithara/auth-service/internal/database"
 	"github.com/fathima-sithara/auth-service/internal/emailjs"
 	"github.com/fathima-sithara/auth-service/internal/handlers"
 	"github.com/fathima-sithara/auth-service/internal/repository"
@@ -18,9 +19,6 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/cors" // Added CORS middleware
 	"github.com/joho/godotenv"
-	"github.com/redis/go-redis/v9"
-	"go.mongodb.org/mongo-driver/mongo"
-	"go.mongodb.org/mongo-driver/mongo/options"
 	"go.uber.org/zap"
 )
 
@@ -51,31 +49,15 @@ func main() {
 	sugar := logger.Sugar()
 	sugar.Infof("Starting auth-service in %s environment on port %d", cfg.App.Env, cfg.App.Port)
 
-	// MongoDB Connection
-	ctxMongo, cancelMongo := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancelMongo()
-	mc, err := mongo.Connect(ctxMongo, options.Client().ApplyURI(cfg.Mongo.URI))
+	// Database connections
+	db, mongoClient, err := database.ConnectMongo(cfg.Mongo.URI, cfg.Mongo.Database, sugar)
 	if err != nil {
-		sugar.Fatalf("MongoDB connect failed: %v", err)
+		sugar.Fatal(err)
 	}
-	if err := mc.Ping(ctxMongo, nil); err != nil {
-		sugar.Fatalf("MongoDB ping failed: %v", err)
+	rdb, err := database.ConnectRedis(cfg.Redis.Addr, cfg.Redis.Password, cfg.Redis.DB, sugar)
+	if err != nil {
+		sugar.Fatal(err)
 	}
-	db := mc.Database(cfg.Mongo.Database)
-	sugar.Info("Successfully connected to MongoDB")
-
-	// Redis Connection
-	rdb := redis.NewClient(&redis.Options{
-		Addr:     cfg.Redis.Addr,
-		Password: cfg.Redis.Password,
-		DB:       cfg.Redis.DB,
-	})
-	ctxRedis, cancelRedis := context.WithTimeout(context.Background(), 5*time.Second) // Shorter timeout for redis ping
-	defer cancelRedis()
-	if _, err := rdb.Ping(ctxRedis).Result(); err != nil {
-		sugar.Fatalf("Redis ping failed: %v", err)
-	}
-	sugar.Info("Successfully connected to Redis")
 
 	// Initialize external clients
 	tw := twilio.NewClient(cfg.Twilio.AccountSID, cfg.Twilio.AuthToken, cfg.Twilio.From)
@@ -87,14 +69,6 @@ func main() {
 
 	c := emailjs.NewClient(cfg.EmailJS.PublicKey, cfg.EmailJS.PrivateKey, cfg.EmailJS.ServiceID, cfg.EmailJS.TemplateID)
 
-	err = c.SendEmail(context.Background(), "test@gmail.com", "123456")
-	if err != nil {
-		fmt.Println("Email error:", err)
-	} else {
-		fmt.Println("✅ Email sent successfully!")
-	}
-
-	
 	userRepo := repository.NewMongoUserRepo(db, cfg.User.Collection)
 	authSvc := services.NewAuthService(userRepo, tw, c, rdb, cfg.App.JWT.Secret, cfg.App.JWT.AccessTTLMinutes, cfg.App.JWT.RefreshTTLDays, cfg.Security.OtpTTLMinutes, cfg.Security.OtpRateLimitPerPhonePerHour, logger)
 	h := handlers.NewHandler(authSvc, logger)
@@ -175,7 +149,7 @@ func main() {
 	}
 
 	// Disconnect MongoDB
-	if err := mc.Disconnect(ctxShut); err != nil {
+	if err := mongoClient.Disconnect(ctxShut); err != nil {
 		sugar.Errorf("MongoDB disconnect error: %v", err)
 	}
 
