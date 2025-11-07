@@ -1,4 +1,4 @@
-package emailjs
+package emailJS
 
 import (
 	"bytes"
@@ -76,7 +76,7 @@ func (c *Client) SendEmail(ctx context.Context, toEmail, otp string) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, emailJSAPIURL, bytes.NewBuffer(jsonBody))
 	if err != nil {
 		return err
-	}	
+	}
 
 	req.Header.Set("Content-Type", "application/json")
 

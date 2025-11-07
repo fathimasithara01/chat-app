@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/fathima-sithara/auth-service/internal/emailjs"
+	"github.com/fathima-sithara/auth-service/internal/emailJS"
 	"github.com/fathima-sithara/auth-service/internal/models"
 	"github.com/fathima-sithara/auth-service/internal/repository"
 	"github.com/fathima-sithara/auth-service/internal/twilio"
@@ -38,7 +38,7 @@ const (
 type AuthService struct {
 	userRepo         repository.UserRepository
 	tw               *twilio.Client
-	ej               *emailjs.Client
+	ej               *emailJS.Client
 	redis            *redis.Client
 	jm               *utils.JWTManager
 	otpTTL           time.Duration
@@ -48,7 +48,7 @@ type AuthService struct {
 }
 
 // NewAuthService creates and returns a new AuthService instance.
-func NewAuthService(userRepo repository.UserRepository, tw *twilio.Client, ej *emailjs.Client, rdb *redis.Client, jwtSecret string, accessMins int, refreshDays int, otpTTLMin int, rateLimit int, logger *zap.Logger) *AuthService {
+func NewAuthService(userRepo repository.UserRepository, tw *twilio.Client, ej *emailJS.Client, rdb *redis.Client, jwtSecret string, accessMins int, refreshDays int, otpTTLMin int, rateLimit int, logger *zap.Logger) *AuthService {
 	const defaultPasswordHashCost = bcrypt.DefaultCost
 	return &AuthService{
 		userRepo:         userRepo,
