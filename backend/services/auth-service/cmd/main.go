@@ -9,8 +9,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/fathima-sithara/auth-service/internal/brevo"
 	"github.com/fathima-sithara/auth-service/internal/config"
+	"github.com/fathima-sithara/auth-service/internal/emailjs"
 	"github.com/fathima-sithara/auth-service/internal/handlers"
 	"github.com/fathima-sithara/auth-service/internal/repository"
 	"github.com/fathima-sithara/auth-service/internal/services"
@@ -85,16 +85,24 @@ func main() {
 		sugar.Info("Twilio client configured.")
 	}
 
-	br := brevo.NewClient(cfg.Brevo.APIKey, cfg.Brevo.FromEmail, cfg.Brevo.FromName)
-	if !br.IsConfigured() {
-		sugar.Warn("Brevo client not fully configured. Email functionality will be skipped.")
+	c := emailjs.NewClient(cfg.EmailJS.PublicKey, cfg.EmailJS.PrivateKey, cfg.EmailJS.ServiceID, cfg.EmailJS.TemplateID)
+
+	err = c.SendEmail(context.Background(), "test@gmail.com", "123456")
+	if err != nil {
+		fmt.Println("Email error:", err)
 	} else {
-		sugar.Info("Brevo client configured.")
+		fmt.Println("✅ Email sent successfully!")
 	}
+
+	// if !emailClient.IsConfigured() || !cfg.EmailJS.Enabled {
+	// 	sugar.Warn("EmailJS client not fully configured or disabled. Email functionality will be skipped.")
+	// } else {
+	// 	sugar.Info("EmailJS client configured successfully.")
+	// }
 
 	// Initialize repository, service, and handler
 	userRepo := repository.NewMongoUserRepo(db, cfg.User.Collection)
-	authSvc := services.NewAuthService(userRepo, tw, br, rdb, cfg.App.JWT.Secret, cfg.App.JWT.AccessTTLMinutes, cfg.App.JWT.RefreshTTLDays, cfg.Security.OtpTTLMinutes, cfg.Security.OtpRateLimitPerPhonePerHour, logger)
+	authSvc := services.NewAuthService(userRepo, tw, c, rdb, cfg.App.JWT.Secret, cfg.App.JWT.AccessTTLMinutes, cfg.App.JWT.RefreshTTLDays, cfg.Security.OtpTTLMinutes, cfg.Security.OtpRateLimitPerPhonePerHour, logger)
 	h := handlers.NewHandler(authSvc, logger)
 
 	// Initialize Fiber app
@@ -114,8 +122,7 @@ func main() {
 		latency := time.Since(start)
 		status := c.Response().StatusCode()
 		if err != nil {
-			// If an error occurred in a handler, Fiber might set the status code
-			// but we also want to log the error itself.
+
 			logger.Error("HTTP Request Error",
 				zap.String("method", c.Method()),
 				zap.String("path", c.Path()),

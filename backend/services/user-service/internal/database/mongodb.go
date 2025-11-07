@@ -9,7 +9,6 @@ import (
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
-// NewMongoDBConnection creates a new MongoDB client connection
 func NewMongoDBConnection(uri, dbName string) (*mongo.Client, error) {
 	clientOptions := options.Client().ApplyURI(uri)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -20,7 +19,6 @@ func NewMongoDBConnection(uri, dbName string) (*mongo.Client, error) {
 		return nil, fmt.Errorf("failed to connect to MongoDB: %w", err)
 	}
 
-	// Ping the primary to verify connection
 	if err = client.Ping(ctx, nil); err != nil {
 		return nil, fmt.Errorf("failed to ping MongoDB: %w", err)
 	}
@@ -29,7 +27,6 @@ func NewMongoDBConnection(uri, dbName string) (*mongo.Client, error) {
 	return client, nil
 }
 
-// NewContext provides a context for database operations
 func NewContext() context.Context {
 	ctx, _ := context.WithTimeout(context.Background(), 5*time.Second)
 	return ctx

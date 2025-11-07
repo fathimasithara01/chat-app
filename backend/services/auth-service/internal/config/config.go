@@ -7,7 +7,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/joho/godotenv" // Ensure this is imported for .env loading
+	"github.com/joho/godotenv"
 	"gopkg.in/yaml.v3"
 )
 
@@ -16,7 +16,7 @@ type AppCfg struct {
 	Port         int           `yaml:"port"`
 	ReadTimeout  time.Duration `yaml:"read_timeout"`
 	WriteTimeout time.Duration `yaml:"write_timeout"`
-	IdleTimeout  time.Duration `yaml:"idle_timeout"` // Added IdleTimeout
+	IdleTimeout  time.Duration `yaml:"idle_timeout"`
 	JWT          struct {
 		Secret           string `yaml:"secret"`
 		AccessTTLMinutes int    `yaml:"accessTTLMinutes"`
@@ -41,10 +41,13 @@ type TwilioCfg struct {
 	From       string `yaml:"from"`
 }
 
-type BrevoCfg struct {
-	APIKey    string `yaml:"apiKey"`
-	FromEmail string `yaml:"fromEmail"`
-	FromName  string `yaml:"fromName"`
+type EmailJSCfg struct {
+	ServiceID   string `yaml:"serviceID"`
+	TemplateID  string `yaml:"templateID"`
+	PublicKey   string `yaml:"publicKey"`
+	PrivateKey  string `yaml:"privateKey"`
+	SenderEmail string `yaml:"senderEmail"`
+	Enabled     bool   `yaml:"enabled"`
 }
 
 type UserCfg struct {
@@ -54,7 +57,7 @@ type UserCfg struct {
 type SecurityCfg struct {
 	OtpTTLMinutes               int `yaml:"otpTTLMinutes"`
 	OtpRateLimitPerPhonePerHour int `yaml:"otpRateLimitPerPhonePerHour"`
-	PasswordHashCost            int `yaml:"passwordHashCost"` // Added bcrypt cost
+	PasswordHashCost            int `yaml:"passwordHashCost"`
 }
 
 type Config struct {
@@ -62,113 +65,80 @@ type Config struct {
 	Mongo    MongoCfg    `yaml:"mongo"`
 	Redis    RedisCfg    `yaml:"redis"`
 	Twilio   TwilioCfg   `yaml:"twilio"`
-	Brevo    BrevoCfg    `yaml:"brevo"`
+	EmailJS  EmailJSCfg  `yaml:"emailjs"`
 	User     UserCfg     `yaml:"user"`
 	Security SecurityCfg `yaml:"security"`
 }
 
-// Load reads the configuration from a YAML file and overrides with environment variables.
 func Load(path string) (*Config, error) {
-	// Load .env variables first, but allow main.go to handle errors if the file is missing
 	_ = godotenv.Load()
 
+	// Read YAML
 	b, err := os.ReadFile(path)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read config file %s: %w", path, err)
+		return nil, fmt.Errorf("failed to read config file: %w", err)
 	}
-
 	cfg := &Config{}
 	if err := yaml.Unmarshal(b, cfg); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal config YAML: %w", err)
 	}
 
-	// Override with environment variables (if set)
-	// App Configuration
-	if v := os.Getenv("APP_ENV"); v != "" {
-		cfg.App.Env = v
+	// Helper override function
+	override := func(env string, apply func(string)) {
+		if v := os.Getenv(env); v != "" {
+			apply(v)
+		}
 	}
-	if v := os.Getenv("APP_PORT"); v != "" {
+
+	// === Overrides ===
+	override("APP_ENV", func(v string) { cfg.App.Env = v })
+	override("APP_PORT", func(v string) {
 		if n, err := strconv.Atoi(v); err == nil {
 			cfg.App.Port = n
 		}
-	}
-	if v := os.Getenv("JWT_SECRET"); v != "" {
-		cfg.App.JWT.Secret = v
-	}
-	if v := os.Getenv("JWT_ACCESS_TTL_MINUTES"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil {
-			cfg.App.JWT.AccessTTLMinutes = n
-		}
-	}
-	if v := os.Getenv("JWT_REFRESH_TTL_DAYS"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil {
-			cfg.App.JWT.RefreshTTLDays = n
-		}
+	})
+	override("JWT_SECRET", func(v string) { cfg.App.JWT.Secret = v })
+	override("MONGO_URI", func(v string) { cfg.Mongo.URI = v })
+	override("MONGO_DB", func(v string) { cfg.Mongo.Database = v })
+	override("REDIS_ADDR", func(v string) { cfg.Redis.Addr = v })
+	override("REDIS_PASSWORD", func(v string) { cfg.Redis.Password = v })
+	override("EMAILJS_SERVICE_ID", func(v string) { cfg.EmailJS.ServiceID = v })
+	override("EMAILJS_TEMPLATE_ID", func(v string) { cfg.EmailJS.TemplateID = v })
+	override("EMAILJS_PUBLIC_KEY", func(v string) { cfg.EmailJS.PublicKey = v })
+	override("EMAILJS_PRIVATE_KEY", func(v string) { cfg.EmailJS.PrivateKey = v })
+	override("EMAILJS_SENDER_EMAIL", func(v string) { cfg.EmailJS.SenderEmail = v })
+
+	// Boolean
+	if v := os.Getenv("EMAILJS_ENABLED"); v == "true" {
+		cfg.EmailJS.Enabled = true
 	}
 
-	// Mongo Configuration
-	if v := os.Getenv("MONGO_URI"); v != "" {
-		cfg.Mongo.URI = v
-	}
-	if v := os.Getenv("MONGO_DB"); v != "" {
-		cfg.Mongo.Database = v
-	}
-
-	// Redis Configuration
-	if v := os.Getenv("REDIS_ADDR"); v != "" {
-		cfg.Redis.Addr = v
-	}
-	if v := os.Getenv("REDIS_PASSWORD"); v != "" {
-		cfg.Redis.Password = v
-	}
-	if v := os.Getenv("REDIS_DB"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil {
-			cfg.Redis.DB = n
-		}
-	}
-
-	// Twilio Configuration
-	if v := os.Getenv("TWILIO_ACCOUNT_SID"); v != "" {
-		cfg.Twilio.AccountSID = v
-	}
-	if v := os.Getenv("TWILIO_AUTH_TOKEN"); v != "" {
-		cfg.Twilio.AuthToken = v
-	}
-	if v := os.Getenv("TWILIO_FROM"); v != "" {
-		cfg.Twilio.From = v
-	}
-
-	// Brevo Configuration
-	if v := os.Getenv("BREVO_API_KEY"); v != "" {
-		cfg.Brevo.APIKey = v
-	}
-	if v := os.Getenv("BREVO_FROM_EMAIL"); v != "" {
-		cfg.Brevo.FromEmail = v
-	}
-	if v := os.Getenv("BREVO_FROM_NAME"); v != "" {
-		cfg.Brevo.FromName = v
-	}
-
-	// Security Configuration
-	if v := os.Getenv("OTP_TTL_MINUTES"); v != "" {
+	// Int configs
+	override("OTP_TTL_MINUTES", func(v string) {
 		if n, err := strconv.Atoi(v); err == nil {
 			cfg.Security.OtpTTLMinutes = n
 		}
-	}
-	if v := os.Getenv("OTP_RATE_LIMIT_PER_PHONE_PER_HOUR"); v != "" {
+	})
+	override("OTP_RATE_LIMIT_PER_PHONE_PER_HOUR", func(v string) {
 		if n, err := strconv.Atoi(v); err == nil {
 			cfg.Security.OtpRateLimitPerPhonePerHour = n
 		}
-	}
-	if v := os.Getenv("PASSWORD_HASH_COST"); v != "" {
+	})
+	override("PASSWORD_HASH_COST", func(v string) {
 		if n, err := strconv.Atoi(v); err == nil {
 			cfg.Security.PasswordHashCost = n
 		}
-	}
+	})
 
-	// Basic validation (can be extended)
+	// === Validation ===
 	if cfg.App.JWT.Secret == "" {
-		return nil, errors.New("JWT secret is not configured. Set JWT_SECRET in .env or config.yaml")
+		return nil, errors.New("JWT_SECRET is required (set in .env or config.yaml)")
+	}
+	if cfg.Mongo.URI == "" {
+		return nil, errors.New("MONGO_URI is required")
+	}
+	if cfg.EmailJS.Enabled && (cfg.EmailJS.ServiceID == "" || cfg.EmailJS.TemplateID == "" || cfg.EmailJS.PublicKey == "") {
+		return nil, errors.New("EmailJS enabled but missing ServiceID, TemplateID, or PublicKey")
 	}
 
 	return cfg, nil

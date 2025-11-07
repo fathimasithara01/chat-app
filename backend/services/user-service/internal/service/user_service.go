@@ -105,7 +105,7 @@ func (s *UserService) GetUserByID(ctx context.Context, id string) (*domain.User,
 	if err != nil {
 		return nil, repository.ErrUserNotFound
 	}
-	user.Password = "" // Do not return password
+	user.Password = "" 
 	return user, nil
 }
 
