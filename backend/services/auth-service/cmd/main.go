@@ -67,17 +67,22 @@ func main() {
 		sugar.Info("Twilio client configured.")
 	}
 
-	c := emailjs.NewClient(cfg.EmailJS.PublicKey, cfg.EmailJS.PrivateKey, cfg.EmailJS.ServiceID, cfg.EmailJS.TemplateID)
+	ej := emailjs.NewClient(cfg.EmailJS.PublicKey, cfg.EmailJS.PrivateKey, cfg.EmailJS.ServiceID, cfg.EmailJS.TemplateID)
+	if !ej.IsConfigured() {
+		sugar.Warn("EmailJS client not fully configured. Email functionality will be skipped.")
+	} else {
+		sugar.Info("EmailJS client configured.")
+	}
 
 	userRepo := repository.NewMongoUserRepo(db, cfg.User.Collection)
-	authSvc := services.NewAuthService(userRepo, tw, c, rdb, cfg.App.JWT.Secret, cfg.App.JWT.AccessTTLMinutes, cfg.App.JWT.RefreshTTLDays, cfg.Security.OtpTTLMinutes, cfg.Security.OtpRateLimitPerPhonePerHour, logger)
+	authSvc := services.NewAuthService(userRepo, tw, ej, rdb, cfg.App.JWT.Secret, cfg.App.JWT.AccessTTLMinutes, cfg.App.JWT.RefreshTTLDays, cfg.Security.OtpTTLMinutes, cfg.Security.OtpRateLimitPerPhonePerHour, logger)
 	h := handlers.NewHandler(authSvc, logger)
 
 	// Initialize Fiber app
 	app := fiber.New(fiber.Config{
 		ReadTimeout:  cfg.App.ReadTimeout,
 		WriteTimeout: cfg.App.WriteTimeout,
-		IdleTimeout:  cfg.App.IdleTimeout, // Added idle timeout
+		IdleTimeout:  cfg.App.IdleTimeout,
 	})
 
 	// Global Middlewares
@@ -90,7 +95,6 @@ func main() {
 		latency := time.Since(start)
 		status := c.Response().StatusCode()
 		if err != nil {
-
 			logger.Error("HTTP Request Error",
 				zap.String("method", c.Method()),
 				zap.String("path", c.Path()),
@@ -111,19 +115,45 @@ func main() {
 		return nil
 	})
 
+	// Middleware to inject UserID into context for protected routes (example)
+	// You would typically have a proper JWT validation middleware here
+	authMiddleware := func(c *fiber.Ctx) error {
+		// This is a placeholder. In a real app, you'd extract and validate the JWT from the Authorization header.
+		// For the purpose of 'Logout' and 'ChangePassword' which need a userID,
+		// we'll simulate setting a userID for testing purposes or assume it's set by another middleware.
+		// For now, if the token parsing from handler's Logout needs it, it can do it.
+		// If you have actual JWT auth middleware, uncomment and adjust this:
+		// token := c.Get("Authorization")
+		// if token == "" || !strings.HasPrefix(token, "Bearer ") {
+		// 	return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "Missing or malformed JWT"})
+		// }
+		// token = strings.TrimPrefix(token, "Bearer ")
+		// userID, err := authSvc.GetUserIDFromAccessToken(token) // Assuming your service has this method
+		// if err != nil {
+		// 	return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "Invalid access token"})
+		// }
+		// c.Locals("userID", userID)
+
+		// For now, we'll allow routes that need userID to extract it themselves or assume a mock.
+		return c.Next()
+	}
+
 	// API Routes
 	api := app.Group("/api/v1")
 	auth := api.Group("/auth")
 
-	auth.Post("/otp/request", h.RequestOTP)
-	auth.Post("/otp/verify", h.VerifyOTP)
+	// Public routes
+	auth.Post("/register", h.Register)           // Signup with email/password
+	auth.Post("/verify-email", h.VerifyEmail)    // Verify email OTP & create/login user
+	auth.Post("/login", h.Login)                 // Login with email and password
+	auth.Post("/request-otp", h.RequestOTP)      // Request OTP for phone
+	auth.Post("/verify-otp", h.VerifyOTP)        // Verify phone OTP & create/login user
+	auth.Post("/refresh", h.Refresh)             // Refresh access token
 
-	auth.Post("/register/email", h.RegisterEmail)           // Request email OTP (for initial verification or password reset scenario)
-	auth.Post("/verify/email", h.VerifyEmail)               // Verify email OTP & create/login user (without password)
-	auth.Post("/register/password", h.RegisterWithPassword) // Register with email and password
-	auth.Post("/login/password", h.LoginWithPassword)       // Login with email and password
-
-	auth.Post("/token/refresh", h.Refresh)
+	// Protected routes (require authentication, e.g., via access token)
+	// Apply authMiddleware to these routes in a real application
+	auth.Post("/logout", authMiddleware, h.Logout)             // Logout user
+	auth.Post("/change-password", authMiddleware, h.ChangePassword) // Change password
 
 	// Start server
 	go func() {

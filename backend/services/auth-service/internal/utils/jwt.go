@@ -17,6 +17,7 @@ type JWTManager struct {
 
 // Custom errors
 var (
+	ErrNotAccessToken       = errors.New("not an access token")
 	ErrInvalidToken         = errors.New("invalid token")
 	ErrUserIDMissing        = errors.New("user ID missing in token claims")
 	ErrNotRefreshToken      = errors.New("not a refresh token")
@@ -48,6 +49,7 @@ func (j *JWTManager) GenerateAccess(userID string) (string, time.Time, error) {
 			ExpiresAt: jwt.NewNumericDate(exp),
 			IssuedAt:  jwt.NewNumericDate(time.Now()),
 			NotBefore: jwt.NewNumericDate(time.Now()),
+			Audience:  jwt.ClaimStrings{"access"}, // Explicitly mark as access token
 		},
 	}
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
@@ -67,7 +69,7 @@ func (j *JWTManager) GenerateRefresh(userID string) (string, time.Time, error) {
 			ExpiresAt: jwt.NewNumericDate(exp),
 			IssuedAt:  jwt.NewNumericDate(time.Now()),
 			NotBefore: jwt.NewNumericDate(time.Now()),
-			Audience:  jwt.ClaimStrings{"refresh"}, // Indicate this is a refresh token
+			Audience:  jwt.ClaimStrings{"refresh"}, // Explicitly mark as refresh token
 		},
 	}
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
@@ -88,6 +90,7 @@ func (j *JWTManager) Verify(tokenStr string) (*claims, error) {
 	}, jwt.WithValidMethods([]string{"HS256"}))
 
 	if err != nil {
+		// Differentiate between expired token error and other validation errors
 		if errors.Is(err, jwt.ErrTokenExpired) || errors.Is(err, jwt.ErrTokenNotValidYet) {
 			return nil, ErrTokenExpired
 		}
@@ -135,16 +138,28 @@ func (j *JWTManager) ParseRefresh(tokenStr string) (string, error) {
 	return customClaims.UserID, nil
 }
 
-//
+// ParseAccess specifically parses and validates an access token.
+// It returns the UserID if valid, otherwise an error.
+func (j *JWTManager) ParseAccess(tokenStr string) (string, error) { // Changed return to string, error for userID
+	customClaims, err := j.Verify(tokenStr)
+	if err != nil {
+		return "", err // Propagate validation errors like ErrTokenExpired
+	}
+
+	// Check if the audience claim indicates it's an access token
+	if !containsAudience(customClaims.RegisteredClaims.Audience, "access") {
+		return "", ErrNotAccessToken
+	}
+
+	return customClaims.UserID, nil // Return UserID directly
+}
+
+// ExtractUserID parses a token and extracts the UserID without specific access/refresh token checks.
+// This might be useful for general token inspection, but ParseAccess/ParseRefresh are more secure for specific contexts.
 func (j *JWTManager) ExtractUserID(tokenStr string) (string, error) {
 	customClaims, err := j.Verify(tokenStr)
 	if err != nil {
 		return "", err // Propagate validation errors
-	}
-
-	// Ensure it's not a refresh token accidentally passed as an access token
-	if containsAudience(customClaims.RegisteredClaims.Audience, "refresh") {
-		return "", ErrNotRefreshToken // Or a more specific error for access token context
 	}
 
 	return customClaims.UserID, nil
