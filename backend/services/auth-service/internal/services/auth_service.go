@@ -105,15 +105,12 @@ func (s *AuthService) RefreshToken(ctx context.Context, refreshToken string) (st
 	return access, refresh, nil
 }
 
-// genOTP generates a 6-digit random OTP.
 func (s *AuthService) genOTP() string {
 	t := time.Now().UnixNano()
 	v := (t % 1000000)
 	return fmt.Sprintf("%06d", v)
 }
 
-// RequestOTP generates and sends an OTP to the given phone number.
-// It includes rate limiting.
 func (s *AuthService) RequestOTP(ctx context.Context, phone string) error {
 	rlKey := fmt.Sprintf("otp:rl:%s", phone)
 	cnt, err := s.redis.Get(ctx, rlKey).Int()
@@ -125,7 +122,7 @@ func (s *AuthService) RequestOTP(ctx context.Context, phone string) error {
 		return ErrTooManyRequests
 	}
 
-	otp := s.genOTP()
+	otp := utils.GenerateOTP()
 	otpKey := fmt.Sprintf("otp:%s", phone)
 
 	if err := s.redis.Set(ctx, otpKey, otp, s.otpTTL).Err(); err != nil {
@@ -228,7 +225,7 @@ func (s *AuthService) RegisterEmail(ctx context.Context, email string) error {
 		return ErrTooManyRequests
 	}
 
-	otp := s.genOTP()
+	otp := utils.GenerateOTP()
 	emailOtpKey := fmt.Sprintf("emailotp:%s", email)
 
 	if err := s.redis.Set(ctx, emailOtpKey, otp, s.otpTTL).Err(); err != nil {
@@ -244,9 +241,8 @@ func (s *AuthService) RegisterEmail(ctx context.Context, email string) error {
 	}
 
 	if s.ej != nil && s.ej.IsConfigured() {
-		subj := "Your verification code"
-		// html := fmt.Sprintf("<p>Your verification code is <b>%s</b>. It is valid for %d minutes.</p>", otp, int(s.otpTTL.Minutes()))
-		if err := s.ej.SendEmail(ctx, email, subj); err != nil {
+
+		if err := s.ej.SendEmail(ctx, email, otp); err != nil {
 			s.log.Error("Failed to send email OTP via EmailJS", zap.Error(err), zap.String("email", email))
 			return fmt.Errorf("failed to send email: %w", err)
 		}

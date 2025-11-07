@@ -94,13 +94,7 @@ func main() {
 		fmt.Println("✅ Email sent successfully!")
 	}
 
-	// if !emailClient.IsConfigured() || !cfg.EmailJS.Enabled {
-	// 	sugar.Warn("EmailJS client not fully configured or disabled. Email functionality will be skipped.")
-	// } else {
-	// 	sugar.Info("EmailJS client configured successfully.")
-	// }
-
-	// Initialize repository, service, and handler
+	
 	userRepo := repository.NewMongoUserRepo(db, cfg.User.Collection)
 	authSvc := services.NewAuthService(userRepo, tw, c, rdb, cfg.App.JWT.Secret, cfg.App.JWT.AccessTTLMinutes, cfg.App.JWT.RefreshTTLDays, cfg.Security.OtpTTLMinutes, cfg.Security.OtpRateLimitPerPhonePerHour, logger)
 	h := handlers.NewHandler(authSvc, logger)
@@ -147,17 +141,14 @@ func main() {
 	api := app.Group("/api/v1")
 	auth := api.Group("/auth")
 
-	// OTP based authentication
 	auth.Post("/otp/request", h.RequestOTP)
 	auth.Post("/otp/verify", h.VerifyOTP)
 
-	// Email-based registration/verification (with password)
 	auth.Post("/register/email", h.RegisterEmail)           // Request email OTP (for initial verification or password reset scenario)
 	auth.Post("/verify/email", h.VerifyEmail)               // Verify email OTP & create/login user (without password)
 	auth.Post("/register/password", h.RegisterWithPassword) // Register with email and password
 	auth.Post("/login/password", h.LoginWithPassword)       // Login with email and password
 
-	// Token management
 	auth.Post("/token/refresh", h.Refresh)
 
 	// Start server
