@@ -14,6 +14,7 @@ import (
 )
 
 var ErrUserNotFound = errors.New("user not found")
+var ErrDuplicateKey = errors.New("duplicate key error")
 
 type UserRepository interface {
 	GetByID(ctx context.Context, id string) (*models.User, error)
@@ -21,6 +22,7 @@ type UserRepository interface {
 	Update(ctx context.Context, u *models.User) (*models.User, error)
 	SoftDelete(ctx context.Context, id string) error
 	FindByEmail(ctx context.Context, email string) (*models.User, error)
+	UpdatePassword(ctx context.Context, u *models.User) error
 }
 
 type mongoUserRepo struct {
@@ -35,6 +37,22 @@ func NewMongoUserRepo(db *mongo.Database, collection string) UserRepository {
 		Options: options.Index().SetUnique(true).SetSparse(true),
 	})
 	return &mongoUserRepo{col: col}
+}
+
+func (r *mongoUserRepo) UpdatePassword(ctx context.Context, u *models.User) error {
+	u.UpdatedAt = time.Now().UTC()
+	result, err := r.col.UpdateByID(ctx, u.ID, bson.M{"$set": u})
+
+	if err != nil {
+		if mongo.IsDuplicateKeyError(err) {
+			return fmt.Errorf("%w: %v", ErrDuplicateKey, err)
+		}
+		return fmt.Errorf("failed to update user: %w", err)
+	}
+	if result.MatchedCount == 0 {
+		return ErrUserNotFound
+	}
+	return nil
 }
 
 func (r *mongoUserRepo) GetByID(ctx context.Context, id string) (*models.User, error) {

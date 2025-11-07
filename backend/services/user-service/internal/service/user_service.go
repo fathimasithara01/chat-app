@@ -15,6 +15,7 @@ import (
 )
 
 var ErrNotFound = errors.New("not found")
+var ErrInvalidCredentials = errors.New("invalid credentials")
 
 type UserService struct {
 	repo       repository.UserRepository
@@ -25,9 +26,9 @@ type UserService struct {
 
 func NewUserService(repo repository.UserRepository, authSvcURL string, logger *zap.Logger) *UserService {
 	if authSvcURL == "" {
-		// try env fallback
-		authSvcURL = "http://localhost:8080"
+		authSvcURL = "http://localhost:8081"
 	}
+
 	return &UserService{
 		repo:       repo,
 		authSvcURL: strings.TrimRight(authSvcURL, "/"),
@@ -57,23 +58,18 @@ func (s *UserService) UpdateProfile(ctx context.Context, userID string, username
 	return s.repo.Update(ctx, u)
 }
 
-// ChangePassword proxies the request to auth-service's change-password endpoint.
-// It requires the access token to be sent along (the caller should set Authorization header).
-func (s *UserService) ChangePassword(ctx context.Context, authHeader, oldPassword, newPassword string) error {
-	if authHeader == "" {
-		return fmt.Errorf("authorization header required")
-	}
-	payload := map[string]string{
-		"old_password": oldPassword,
-		"new_password": newPassword,
-	}
-	body, _ := json.Marshal(payload)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.authSvcURL+"/api/v1/auth/change-password", strings.NewReader(string(body)))
+func (s *UserService) ChangePassword(ctx context.Context, token, oldPass, newPass string) error {
+	body, _ := json.Marshal(map[string]string{
+		"old_password": newPass,
+		"new_password": newPass,
+	})
+	req, err := http.NewRequestWithContext(ctx, "POST", s.authSvcURL+"/api/v1/auth/change-password", strings.NewReader(string(body)))
 	if err != nil {
 		return err
 	}
+
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", authHeader)
+	req.Header.Set("Authorization", token)
 
 	resp, err := s.httpClient.Do(req)
 	if err != nil {
@@ -81,8 +77,8 @@ func (s *UserService) ChangePassword(ctx context.Context, authHeader, oldPasswor
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode >= 300 {
-		return fmt.Errorf("auth-service returned status %d", resp.StatusCode)
+	if resp.StatusCode != 200 {
+		return fmt.Errorf("auth-service rejected change-password")
 	}
 	return nil
 }

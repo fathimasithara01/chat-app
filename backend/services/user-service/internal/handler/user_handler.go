@@ -66,22 +66,17 @@ func (h *Handler) UpdateProfile(c *fiber.Ctx) error {
 	return c.JSON(u)
 }
 
-// ChangePassword proxies to auth-service
 func (h *Handler) ChangePassword(c *fiber.Ctx) error {
-	authHeader := c.Get("Authorization")
-	if authHeader == "" {
-		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "missing authorization header"})
+	token := c.Get("Authorization")
+	var req struct {
+		OldPassword string `json:"old_password"`
+		NewPassword string `json:"new_password"`
 	}
-	var req changePasswordReq
 	if err := c.BodyParser(&req); err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid body"})
+		return c.Status(400).JSON(fiber.Map{"error": "invalid body"})
 	}
-	if req.OldPassword == "" || req.NewPassword == "" {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "old and new password required"})
-	}
-	if err := h.svc.ChangePassword(c.Context(), authHeader, req.OldPassword, req.NewPassword); err != nil {
-		h.log.Error("change password error", zap.Error(err))
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to change password"})
+	if err := h.svc.ChangePassword(c.Context(), token, req.OldPassword, req.NewPassword); err != nil {
+		return c.Status(400).JSON(fiber.Map{"error": err.Error()})
 	}
 	return c.JSON(fiber.Map{"message": "password changed"})
 }
