@@ -11,7 +11,6 @@ import (
 	"go.uber.org/zap"
 )
 
-// New initializes the Fiber application with config, middlewares, and routes.
 func New(cfg *config.Config, h *handlers.Handler, logger *zap.Logger) *fiber.App {
 	app := fiber.New(fiber.Config{
 		ReadTimeout:  cfg.App.ReadTimeout,
@@ -19,17 +18,14 @@ func New(cfg *config.Config, h *handlers.Handler, logger *zap.Logger) *fiber.App
 		IdleTimeout:  cfg.App.IdleTimeout,
 	})
 
-	// Global Middlewares
 	app.Use(cors.New())
-	app.Use(zapLoggerMiddleware(logger)) // Custom Zap logger middleware
+	app.Use(zapLoggerMiddleware(logger)) 
 
-	// Setup Routes
 	routes.Setup(app, h)
 
 	return app
 }
 
-// zapLoggerMiddleware logs incoming HTTP requests using Zap.
 func zapLoggerMiddleware(logger *zap.Logger) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		start := time.Now()

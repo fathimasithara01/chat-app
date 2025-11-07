@@ -13,13 +13,9 @@ import (
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
-// ErrUserNotFound is returned when a user with the given criteria is not found.
 var ErrUserNotFound = errors.New("user not found")
-
-// ErrDuplicateKey is returned when a unique constraint is violated during user creation or update.
 var ErrDuplicateKey = errors.New("duplicate key error")
 
-// UserRepository defines the interface for user data operations.
 type UserRepository interface {
 	Create(ctx context.Context, u *models.User) error
 	FindByPhone(ctx context.Context, phone string) (*models.User, error)
@@ -30,22 +26,16 @@ type UserRepository interface {
 	FindByUsername(ctx context.Context, username string) (*models.User, error)
 }
 
-// mongoUserRepo implements UserRepository for MongoDB.
 type mongoUserRepo struct {
 	col *mongo.Collection
 }
 
-// NewMongoUserRepo creates a new UserRepository instance backed by MongoDB.
-// It also ensures necessary indexes are created.
 func NewMongoUserRepo(db *mongo.Database, collection string) UserRepository {
 	col := db.Collection(collection)
-	// Ensure indexes for unique fields (phone, email, username)
-	// SetSparse(true) allows documents without these fields to be inserted without violating unique constraint.
-	// This is important because a user might register only with phone OR email initially.
 	_, err := col.Indexes().CreateMany(context.Background(), []mongo.IndexModel{
 		{Keys: bson.D{{Key: "phone", Value: 1}}, Options: options.Index().SetUnique(true).SetSparse(true)},
 		{Keys: bson.D{{Key: "email", Value: 1}}, Options: options.Index().SetUnique(true).SetSparse(true)},
-		{Keys: bson.D{{Key: "username", Value: 1}}, Options: options.Index().SetUnique(true).SetSparse(true)}, // Added index for username
+		{Keys: bson.D{{Key: "username", Value: 1}}, Options: options.Index().SetUnique(true).SetSparse(true)},
 	})
 	if err != nil {
 		fmt.Printf("Warning: Failed to create MongoDB indexes: %v\n", err)
@@ -53,7 +43,6 @@ func NewMongoUserRepo(db *mongo.Database, collection string) UserRepository {
 	return &mongoUserRepo{col: col}
 }
 
-// Create inserts a new user into the database.
 func (r *mongoUserRepo) Create(ctx context.Context, u *models.User) error {
 	u.CreatedAt = time.Now().UTC()
 	u.UpdatedAt = time.Now().UTC()
@@ -70,7 +59,6 @@ func (r *mongoUserRepo) Create(ctx context.Context, u *models.User) error {
 	return nil
 }
 
-// FindByPhone retrieves a user by their phone number.
 func (r *mongoUserRepo) FindByPhone(ctx context.Context, phone string) (*models.User, error) {
 	var u models.User
 	err := r.col.FindOne(ctx, bson.M{"phone": phone}).Decode(&u)
@@ -83,7 +71,6 @@ func (r *mongoUserRepo) FindByPhone(ctx context.Context, phone string) (*models.
 	return &u, nil
 }
 
-// FindByEmail retrieves a user by their email address.
 func (r *mongoUserRepo) FindByEmail(ctx context.Context, email string) (*models.User, error) {
 	var u models.User
 	err := r.col.FindOne(ctx, bson.M{"email": email}).Decode(&u)
@@ -96,7 +83,6 @@ func (r *mongoUserRepo) FindByEmail(ctx context.Context, email string) (*models.
 	return &u, nil
 }
 
-// FindByID retrieves a user by their MongoDB ObjectID string.
 func (r *mongoUserRepo) FindByID(ctx context.Context, id string) (*models.User, error) {
 	objID, err := primitive.ObjectIDFromHex(id)
 	if err != nil {
@@ -114,7 +100,6 @@ func (r *mongoUserRepo) FindByID(ctx context.Context, id string) (*models.User, 
 	return &u, nil
 }
 
-// FindByUsername retrieves a user by their username.
 func (r *mongoUserRepo) FindByUsername(ctx context.Context, username string) (*models.User, error) {
 	var u models.User
 	err := r.col.FindOne(ctx, bson.M{"username": username}).Decode(&u)
@@ -127,7 +112,6 @@ func (r *mongoUserRepo) FindByUsername(ctx context.Context, username string) (*m
 	return &u, nil
 }
 
-// Update updates an existing user's document in the database.
 func (r *mongoUserRepo) Update(ctx context.Context, u *models.User) error {
 	u.UpdatedAt = time.Now().UTC()
 	result, err := r.col.UpdateByID(ctx, u.ID, bson.M{"$set": u})
@@ -143,7 +127,6 @@ func (r *mongoUserRepo) Update(ctx context.Context, u *models.User) error {
 	return nil
 }
 
-// SetRefreshTokenHash updates only the refresh token hash for a given user ID.
 func (r *mongoUserRepo) SetRefreshTokenHash(ctx context.Context, id string, hash string) error {
 	objID, err := primitive.ObjectIDFromHex(id)
 	if err != nil {

@@ -44,7 +44,7 @@ type emailRequest struct {
 	ServiceID      string            `json:"service_id"`
 	TemplateID     string            `json:"template_id"`
 	UserID         string            `json:"user_id"`
-	AccessToken    string            `json:"accessToken"` // ✅ FIXED HERE
+	AccessToken    string            `json:"accessToken"`
 	TemplateParams map[string]string `json:"template_params"`
 }
 
@@ -58,7 +58,7 @@ func (c *Client) SendEmail(ctx context.Context, toEmail, otp string) error {
 		TemplateID: c.TemplateID,
 		UserID:     c.PublicKey,
 		// AccessToken: c.PrivateKey,
-		AccessToken: c.PrivateKey, // ✅ This now correctly maps to "accessToken"
+		AccessToken: c.PrivateKey,
 
 		TemplateParams: map[string]string{
 			"user_email": toEmail,

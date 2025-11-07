@@ -8,14 +8,12 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 )
 
-// JWTManager handles the creation, signing, and parsing of JWTs.
 type JWTManager struct {
 	secret     string
 	accessTTL  time.Duration
 	refreshTTL time.Duration
 }
 
-// Custom errors
 var (
 	ErrNotAccessToken       = errors.New("not an access token")
 	ErrInvalidToken         = errors.New("invalid token")
@@ -25,13 +23,11 @@ var (
 	ErrInvalidSigningMethod = errors.New("unexpected signing method")
 )
 
-// claims represents the JWT claims used for both access and refresh tokens.
 type claims struct {
-	UserID string `json:"sub"` // Subject (user ID)
+	UserID string `json:"sub"`
 	jwt.RegisteredClaims
 }
 
-// NewJWTManager creates and returns a new JWTManager instance.
 func NewJWTManager(secret string, accessMins int, refreshDays int) *JWTManager {
 	return &JWTManager{
 		secret:     secret,
@@ -40,7 +36,6 @@ func NewJWTManager(secret string, accessMins int, refreshDays int) *JWTManager {
 	}
 }
 
-// GenerateAccess generates a new access token for the given userID.
 func (j *JWTManager) GenerateAccess(userID string) (string, time.Time, error) {
 	exp := time.Now().Add(j.accessTTL)
 	claims := &claims{
@@ -49,7 +44,7 @@ func (j *JWTManager) GenerateAccess(userID string) (string, time.Time, error) {
 			ExpiresAt: jwt.NewNumericDate(exp),
 			IssuedAt:  jwt.NewNumericDate(time.Now()),
 			NotBefore: jwt.NewNumericDate(time.Now()),
-			Audience:  jwt.ClaimStrings{"access"}, // Explicitly mark as access token
+			Audience:  jwt.ClaimStrings{"access"},
 		},
 	}
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
@@ -60,7 +55,6 @@ func (j *JWTManager) GenerateAccess(userID string) (string, time.Time, error) {
 	return s, exp, nil
 }
 
-// GenerateRefresh generates a new refresh token for the given userID.
 func (j *JWTManager) GenerateRefresh(userID string) (string, time.Time, error) {
 	exp := time.Now().Add(j.refreshTTL)
 	claims := &claims{
@@ -69,7 +63,7 @@ func (j *JWTManager) GenerateRefresh(userID string) (string, time.Time, error) {
 			ExpiresAt: jwt.NewNumericDate(exp),
 			IssuedAt:  jwt.NewNumericDate(time.Now()),
 			NotBefore: jwt.NewNumericDate(time.Now()),
-			Audience:  jwt.ClaimStrings{"refresh"}, // Explicitly mark as refresh token
+			Audience:  jwt.ClaimStrings{"refresh"},
 		},
 	}
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
@@ -80,7 +74,6 @@ func (j *JWTManager) GenerateRefresh(userID string) (string, time.Time, error) {
 	return s, exp, nil
 }
 
-// Verify parses and validates a JWT token.
 func (j *JWTManager) Verify(tokenStr string) (*claims, error) {
 	token, err := jwt.ParseWithClaims(tokenStr, &claims{}, func(token *jwt.Token) (interface{}, error) {
 		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
@@ -90,7 +83,6 @@ func (j *JWTManager) Verify(tokenStr string) (*claims, error) {
 	}, jwt.WithValidMethods([]string{"HS256"}))
 
 	if err != nil {
-		// Differentiate between expired token error and other validation errors
 		if errors.Is(err, jwt.ErrTokenExpired) || errors.Is(err, jwt.ErrTokenNotValidYet) {
 			return nil, ErrTokenExpired
 		}
@@ -113,7 +105,6 @@ func (j *JWTManager) Verify(tokenStr string) (*claims, error) {
 	return customClaims, nil
 }
 
-// containsAudience checks if a specific audience string is present in the ClaimStrings slice.
 func containsAudience(audiences jwt.ClaimStrings, target string) bool {
 	for _, aud := range audiences {
 		if aud == target {
@@ -123,14 +114,12 @@ func containsAudience(audiences jwt.ClaimStrings, target string) bool {
 	return false
 }
 
-// ParseRefresh specifically parses and validates a refresh token.
 func (j *JWTManager) ParseRefresh(tokenStr string) (string, error) {
 	customClaims, err := j.Verify(tokenStr)
 	if err != nil {
-		return "", err // Propagate validation errors
+		return "", err
 	}
 
-	// Check if the audience claim indicates it's a refresh token
 	if !containsAudience(customClaims.RegisteredClaims.Audience, "refresh") {
 		return "", ErrNotRefreshToken
 	}
@@ -138,28 +127,24 @@ func (j *JWTManager) ParseRefresh(tokenStr string) (string, error) {
 	return customClaims.UserID, nil
 }
 
-// ParseAccess specifically parses and validates an access token.
-// It returns the UserID if valid, otherwise an error.
-func (j *JWTManager) ParseAccess(tokenStr string) (string, error) { // Changed return to string, error for userID
+func (j *JWTManager) ParseAccess(tokenStr string) (string, error) {
 	customClaims, err := j.Verify(tokenStr)
 	if err != nil {
-		return "", err // Propagate validation errors like ErrTokenExpired
+		return "", err
 	}
 
-	// Check if the audience claim indicates it's an access token
 	if !containsAudience(customClaims.RegisteredClaims.Audience, "access") {
 		return "", ErrNotAccessToken
 	}
 
-	return customClaims.UserID, nil // Return UserID directly
+	return customClaims.UserID, nil
+
 }
 
-// ExtractUserID parses a token and extracts the UserID without specific access/refresh token checks.
-// This might be useful for general token inspection, but ParseAccess/ParseRefresh are more secure for specific contexts.
 func (j *JWTManager) ExtractUserID(tokenStr string) (string, error) {
 	customClaims, err := j.Verify(tokenStr)
 	if err != nil {
-		return "", err // Propagate validation errors
+		return "", err
 	}
 
 	return customClaims.UserID, nil

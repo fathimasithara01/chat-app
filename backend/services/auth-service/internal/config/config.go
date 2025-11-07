@@ -83,14 +83,12 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("failed to unmarshal config YAML: %w", err)
 	}
 
-	// Helper override function
 	override := func(env string, apply func(string)) {
 		if v := os.Getenv(env); v != "" {
 			apply(v)
 		}
 	}
 
-	// === Overrides ===
 	override("APP_ENV", func(v string) { cfg.App.Env = v })
 	override("APP_PORT", func(v string) {
 		if n, err := strconv.Atoi(v); err == nil {
@@ -108,12 +106,10 @@ func Load(path string) (*Config, error) {
 	override("EMAILJS_PRIVATE_KEY", func(v string) { cfg.EmailJS.PrivateKey = v })
 	override("EMAILJS_SENDER_EMAIL", func(v string) { cfg.EmailJS.SenderEmail = v })
 
-	// Boolean
 	if v := os.Getenv("EMAILJS_ENABLED"); v == "true" {
 		cfg.EmailJS.Enabled = true
 	}
 
-	// Int configs
 	override("OTP_TTL_MINUTES", func(v string) {
 		if n, err := strconv.Atoi(v); err == nil {
 			cfg.Security.OtpTTLMinutes = n
@@ -130,7 +126,6 @@ func Load(path string) (*Config, error) {
 		}
 	})
 
-	// === Validation ===
 	if cfg.App.JWT.Secret == "" {
 		return nil, errors.New("JWT_SECRET is required (set in .env or config.yaml)")
 	}
