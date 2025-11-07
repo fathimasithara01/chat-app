@@ -1,54 +1,42 @@
 package utils
 
 import (
-	"fmt"
-	"time"
+	"errors"
+	"os"
 
-	"githhub.com/fathimasithara/user-service/internal/domain"
 	"github.com/golang-jwt/jwt/v5"
 )
 
-type CustomClaims struct {
-	UserID string          `json:"sub"`
-	Role   domain.UserRole `json:"role"`
+type Claims struct {
+	UserID string `json:"user_id"`
+	Role   string `json:"role,omitempty"`
 	jwt.RegisteredClaims
 }
 
-type JWTManager struct {
-	secret string
-}
-
-func NewJWTManager(secret string) *JWTManager {
-	return &JWTManager{secret: secret}
-}
-
-func (j *JWTManager) Generate(userID string, role domain.UserRole, ttl time.Duration) (string, error) {
-	claims := CustomClaims{
-		UserID: userID,
-		Role:   role,
-		RegisteredClaims: jwt.RegisteredClaims{
-			ExpiresAt: jwt.NewNumericDate(time.Now().Add(ttl)),
-			IssuedAt:  jwt.NewNumericDate(time.Now()),
-			NotBefore: jwt.NewNumericDate(time.Now()),
-		},
+func GetJWTSecret() string {
+	if s := os.Getenv("JWT_SECRET"); s != "" {
+		return s
 	}
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	return token.SignedString([]byte(j.secret))
+	return "dev_secret"
 }
 
-func (j *JWTManager) GetClaims(tokenString string) (*CustomClaims, error) {
-	token, err := jwt.ParseWithClaims(tokenString, &CustomClaims{}, func(token *jwt.Token) (interface{}, error) {
-		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
-			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+func ParseJWT(tokenStr, secret string) (*Claims, error) {
+	token, err := jwt.ParseWithClaims(tokenStr, &Claims{}, func(t *jwt.Token) (interface{}, error) {
+		// enforce HMAC
+		if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
+			return nil, errors.New("invalid signing method")
 		}
-		return []byte(j.secret), nil
-	})
-	if err != nil || !token.Valid {
-		return nil, fmt.Errorf("invalid token")
+		return []byte(secret), nil
+	}, jwt.WithValidMethods([]string{"HS256"}))
+	if err != nil {
+		return nil, err
 	}
-	claims, ok := token.Claims.(*CustomClaims)
+	if !token.Valid {
+		return nil, errors.New("invalid token")
+	}
+	claims, ok := token.Claims.(*Claims)
 	if !ok {
-		return nil, fmt.Errorf("invalid token claims")
+		return nil, errors.New("invalid claims")
 	}
 	return claims, nil
 }

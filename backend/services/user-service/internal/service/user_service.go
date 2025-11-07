@@ -2,144 +2,95 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
+	"net/http"
+	"strings"
 	"time"
 
-	"githhub.com/fathimasithara/user-service/internal/domain"
-	"githhub.com/fathimasithara/user-service/internal/repository"
-	"githhub.com/fathimasithara/user-service/internal/utils"
+	models "github.com/fathima-sithara/user-service/internal/model"
+	"github.com/fathima-sithara/user-service/internal/repository"
 	"go.uber.org/zap"
 )
 
-var (
-	ErrUserAlreadyExists  = errors.New("user already exists")
-	ErrInvalidToken       = errors.New("invalid or expired token")
-	ErrInvalidCredentials = errors.New("invalid credentials")
-	ErrValidation         = errors.New("validation error")
-)
+var ErrNotFound = errors.New("not found")
 
 type UserService struct {
 	repo       repository.UserRepository
-	logger     *zap.Logger
-	jwtManager *utils.JWTManager
-	accessTTL  time.Duration
-	refreshTTL time.Duration
+	authSvcURL string // for change-password proxy
+	log        *zap.Logger
+	httpClient *http.Client
 }
 
-func NewUserService(repo repository.UserRepository, logger *zap.Logger, jwtManager *utils.JWTManager, accessTTLMinutes int, refreshTTLDays int) *UserService {
+func NewUserService(repo repository.UserRepository, authSvcURL string, logger *zap.Logger) *UserService {
+	if authSvcURL == "" {
+		// try env fallback
+		authSvcURL = "http://localhost:8080"
+	}
 	return &UserService{
 		repo:       repo,
-		logger:     logger,
-		jwtManager: jwtManager,
-		accessTTL:  time.Duration(accessTTLMinutes) * time.Minute,
-		refreshTTL: time.Duration(refreshTTLDays) * 24 * time.Hour,
+		authSvcURL: strings.TrimRight(authSvcURL, "/"),
+		log:        logger,
+		httpClient: &http.Client{Timeout: 5 * time.Second},
 	}
 }
 
-func (s *UserService) RegisterUser(ctx context.Context, req *domain.UserRegisterRequest) (*domain.User, error) {
-	if req.Name == "" || req.Email == "" || req.Password == "" {
-		return nil, ErrValidation
-	}
+func (s *UserService) GetProfile(ctx context.Context, userID string) (*models.User, error) {
+	return s.repo.GetByID(ctx, userID)
+}
 
-	_, err := s.repo.GetByEmail(ctx, req.Email)
-	if err == nil {
-		return nil, ErrUserAlreadyExists
-	}
-
-	hash, _ := utils.HashPassword(req.Password)
-
-	user := &domain.User{
-		Name:     req.Name,
-		Email:    req.Email,
-		Phone:    req.Phone,
-		Password: hash,
-		Role:     domain.RoleUser,
-		Verified: false,
-	}
-
-	id, err := s.repo.Create(ctx, user)
+func (s *UserService) UpdateProfile(ctx context.Context, userID string, username, email, phone string) (*models.User, error) {
+	u, err := s.repo.GetByID(ctx, userID)
 	if err != nil {
 		return nil, err
 	}
-	user.ID = id
-	user.Password = ""
-	return user, nil
+	if username != "" {
+		u.Username = username
+	}
+	if email != "" {
+		u.Email = email
+	}
+	if phone != "" {
+		u.Phone = phone
+	}
+	return s.repo.Update(ctx, u)
 }
 
-func (s *UserService) LoginUser(ctx context.Context, email, password string) (*domain.AuthTokens, error) {
-	user, err := s.repo.GetByEmail(ctx, email)
+// ChangePassword proxies the request to auth-service's change-password endpoint.
+// It requires the access token to be sent along (the caller should set Authorization header).
+func (s *UserService) ChangePassword(ctx context.Context, authHeader, oldPassword, newPassword string) error {
+	if authHeader == "" {
+		return fmt.Errorf("authorization header required")
+	}
+	payload := map[string]string{
+		"old_password": oldPassword,
+		"new_password": newPassword,
+	}
+	body, _ := json.Marshal(payload)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.authSvcURL+"/api/v1/auth/change-password", strings.NewReader(string(body)))
 	if err != nil {
-		return nil, ErrInvalidCredentials
+		return err
 	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", authHeader)
 
-	if !utils.CheckPasswordHash(password, user.Password) {
-		return nil, ErrInvalidCredentials
-	}
-
-	return s.generateTokens(user.ID, user.Role)
-}
-
-func (s *UserService) generateTokens(userID string, role domain.UserRole) (*domain.AuthTokens, error) {
-	access, err := s.jwtManager.Generate(userID, role, s.accessTTL)
+	resp, err := s.httpClient.Do(req)
 	if err != nil {
-		return nil, err
+		return err
 	}
-	refresh, err := s.jwtManager.Generate(userID, role, s.refreshTTL)
-	if err != nil {
-		return nil, err
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 300 {
+		return fmt.Errorf("auth-service returned status %d", resp.StatusCode)
 	}
-	return &domain.AuthTokens{AccessToken: access, RefreshToken: refresh}, nil
+	return nil
 }
 
-func (s *UserService) RefreshAccessToken(refreshToken string) (string, error) {
-	claims, err := s.jwtManager.GetClaims(refreshToken)
-	if err != nil {
-		return "", ErrInvalidToken
-	}
-	return s.jwtManager.Generate(claims.UserID, claims.Role, s.accessTTL)
+func (s *UserService) GetByIDAdmin(ctx context.Context, id string) (*models.User, error) {
+	return s.repo.GetByIDAdmin(ctx, id)
 }
 
-// GetUserByID retrieves a user by ID
-func (s *UserService) GetUserByID(ctx context.Context, id string) (*domain.User, error) {
-	user, err := s.repo.GetByID(ctx, id)
-	if err != nil {
-		return nil, repository.ErrUserNotFound
-	}
-	user.Password = "" 
-	return user, nil
-}
-
-// UpdateUser updates a user's information
-func (s *UserService) UpdateUser(ctx context.Context, id string, req *domain.UserUpdateRequest) error {
-	update := make(map[string]interface{})
-	if req.Name != nil {
-		update["name"] = *req.Name
-	}
-	if req.Email != nil {
-		update["email"] = *req.Email
-	}
-	if req.Phone != nil {
-		update["phone"] = *req.Phone
-	}
-	if len(update) == 0 {
-		return ErrValidation
-	}
-	return s.repo.Update(ctx, id, update)
-}
-
-// DeleteUser deletes a user by ID
 func (s *UserService) DeleteUser(ctx context.Context, id string) error {
-	return s.repo.Delete(ctx, id)
-}
-
-// ListUsers returns paginated users
-func (s *UserService) ListUsers(ctx context.Context, limit, offset int64) ([]*domain.User, error) {
-	users, err := s.repo.List(ctx, limit, offset)
-	if err != nil {
-		return nil, err
-	}
-	for _, u := range users {
-		u.Password = ""
-	}
-	return users, nil
+	return s.repo.SoftDelete(ctx, id)
 }
