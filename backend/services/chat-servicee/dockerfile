@@ -1,0 +1,49 @@
+# syntax=docker/dockerfile:1
+
+### BUILD STAGE ###
+FROM golang:1.25-alpine AS builder
+WORKDIR /app
+
+# install git and ca-certificates (if you call go modules or external packages)
+RUN apk add --no-cache git ca-certificates
+
+# Copy go.mod/go.sum first for caching
+COPY go.mod go.sum ./
+RUN go mod download
+
+# Copy the source
+COPY . .
+
+# Build
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+    go build -ldflags="-s -w" -o /chat-service ./cmd
+
+### RUNTIME STAGE ###
+FROM alpine:3.18
+RUN apk add --no-cache ca-certificates tzdata
+WORKDIR /app
+
+# create user for running
+RUN addgroup -S app && adduser -S -G app app
+USER app
+
+# copy binary
+COPY --from=builder /chat-service /app/chat-service
+
+# copy wait-for script (we'll create it below)
+COPY wait-for.sh /app/wait-for.sh
+USER root
+RUN chmod +x /app/wait-for.sh
+USER app
+
+# default config dir and keys as mount points (kept external)
+VOLUME [ "/app/config", "/app/keys" ]
+
+ENV CONFIG_PATH=/app/config/config.yaml
+ENV KEY_DIR=/app/keys
+
+EXPOSE 8083
+
+ENTRYPOINT ["/app/wait-for.sh"]
+# wait-for will run the binary after dependencies are up (see script usage below)
+CMD [ "localhost:9092", "mongo:27017", "redis:6379", "--", "/app/chat-service", "--config", "/app/config/config.yaml" ]

@@ -1,0 +1,11 @@
+# Go
+**/node_modules
+**/vendor
+*.log
+*.tmp
+*.swp
+*.db
+.DS_Store
+.git
+.gitignore
+docker-compose.override.yml
