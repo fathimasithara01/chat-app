@@ -22,7 +22,7 @@ func Register(
 	redisClient *cache.Client,
 	hub *ws.Hub,
 	consumer *kafka.Consumer,
-	jwtMw fiber.Handler, // <- already passed from main
+	jwtMw fiber.Handler, 
 ) {
 
 	api := app.Group("/api/v1")

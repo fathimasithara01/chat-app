@@ -38,30 +38,38 @@ type AuthService struct {
 	tw               *twilio.Client
 	ej               *emailJS.Client
 	redis            *redis.Client
-	jm               *utils.JWTManager
+	jwtMgr           *utils.JWTManager
 	otpTTL           time.Duration
 	otpRateLimit     int
 	passwordHashCost int
 	log              *zap.Logger
 }
 
-func NewAuthService(userRepo repository.UserRepository, tw *twilio.Client, ej *emailJS.Client, rdb *redis.Client, jwtSecret string, accessMins int, refreshDays int, otpTTLMin int, rateLimit int, logger *zap.Logger) *AuthService {
-	const defaultPasswordHashCost = bcrypt.DefaultCost
+func NewAuthService(
+	userRepo repository.UserRepository,
+	tw *twilio.Client,
+	ej *emailJS.Client,
+	rdb *redis.Client,
+	jwtMgr *utils.JWTManager,
+	otpTTLMin int,
+	rateLimit int,
+	logger *zap.Logger,
+) *AuthService {
 	return &AuthService{
 		userRepo:         userRepo,
 		tw:               tw,
 		ej:               ej,
 		redis:            rdb,
-		jm:               utils.NewJWTManager(jwtSecret, accessMins, refreshDays),
+		jwtMgr:           jwtMgr,
 		otpTTL:           time.Duration(otpTTLMin) * time.Minute,
 		otpRateLimit:     rateLimit,
-		passwordHashCost: defaultPasswordHashCost,
+		passwordHashCost: bcrypt.DefaultCost,
 		log:              logger,
 	}
 }
 
 func (s *AuthService) RefreshToken(ctx context.Context, refreshToken string) (string, string, error) {
-	userID, err := s.jm.ParseRefresh(refreshToken)
+	userID, err := s.jwtMgr.ParseRefresh(refreshToken)
 	if err != nil {
 		s.log.Warn("Failed to parse refresh token", zap.Error(err))
 		return "", "", ErrInvalidRefreshToken
@@ -86,13 +94,13 @@ func (s *AuthService) RefreshToken(ctx context.Context, refreshToken string) (st
 		return "", "", ErrInvalidRefreshToken
 	}
 
-	access, _, err := s.jm.GenerateAccess(userID)
+	access, _, err := s.jwtMgr.GenerateRefreshToken(userID)
 	if err != nil {
 		s.log.Error("Failed to generate access token during refresh", zap.Error(err), zap.String("userID", userID))
 		return "", "", fmt.Errorf("failed to generate access token: %w", err)
 	}
 
-	refresh, _, err := s.jm.GenerateRefresh(userID)
+	refresh, _, err := s.jwtMgr.GenerateRefreshToken(userID)
 	if err != nil {
 		s.log.Error("Failed to generate new refresh token during refresh", zap.Error(err), zap.String("userID", userID))
 		return "", "", fmt.Errorf("failed to generate refresh token: %w", err)
@@ -254,12 +262,12 @@ func (s *AuthService) CompleteEmailVerification(ctx context.Context, email, otp 
 	}
 
 	uid := u.ID.Hex()
-	access, _, err := s.jm.GenerateAccess(uid)
+	access, _, err := s.jwtMgr.GenerateAccessToken(uid)
 	if err != nil {
 		s.log.Error("Failed to generate access token for email user after OTP verification", zap.Error(err), zap.String("userID", uid))
 		return "", "", fmt.Errorf("failed to generate access token: %w", err)
 	}
-	refresh, _, err := s.jm.GenerateRefresh(uid)
+	refresh, _, err := s.jwtMgr.GenerateRefreshToken(uid)
 	if err != nil {
 		s.log.Error("Failed to generate refresh token for email user after OTP verification", zap.Error(err), zap.String("userID", uid))
 		return "", "", fmt.Errorf("failed to generate refresh token: %w", err)
@@ -289,12 +297,12 @@ func (s *AuthService) LoginWithPassword(ctx context.Context, email, password str
 	}
 
 	uid := user.ID.Hex()
-	access, _, err := s.jm.GenerateAccess(uid)
+	access, _, err := s.jwtMgr.GenerateAccessToken(uid)
 	if err != nil {
 		s.log.Error("Failed to generate access token after password login", zap.Error(err), zap.String("userID", uid))
 		return "", "", fmt.Errorf("failed to generate access token: %w", err)
 	}
-	refresh, _, err := s.jm.GenerateRefresh(uid)
+	refresh, _, err := s.jwtMgr.GenerateRefreshToken(uid)
 	if err != nil {
 		s.log.Error("Failed to generate refresh token after password login", zap.Error(err), zap.String("userID", uid))
 		return "", "", fmt.Errorf("failed to generate refresh token: %w", err)
@@ -437,13 +445,13 @@ func (s *AuthService) VerifyOTP(ctx context.Context, phone, email, otp string) (
 
 	uid := u.ID.Hex()
 
-	access, _, err := s.jm.GenerateAccess(uid)
+	access, _, err := s.jwtMgr.GenerateAccessToken(uid)
 	if err != nil {
 		s.log.Error("Failed to generate access token", zap.Error(err), zap.String("userID", uid))
 		return "", "", fmt.Errorf("failed to generate access token: %w", err)
 	}
 
-	refresh, _, err := s.jm.GenerateRefresh(uid)
+	refresh, _, err := s.jwtMgr.GenerateRefreshToken(uid)
 	if err != nil {
 		s.log.Error("Failed to generate refresh token", zap.Error(err), zap.String("userID", uid))
 		return "", "", fmt.Errorf("failed to generate refresh token: %w", err)
@@ -512,5 +520,5 @@ func (s *AuthService) ChangePassword(ctx context.Context, userID, oldPassword, n
 }
 
 func (s *AuthService) GetUserIDFromAccessToken(accessToken string) (string, error) {
-	return s.jm.ParseAccess(accessToken)
+	return s.jwtMgr.ParseAccess(accessToken)
 }

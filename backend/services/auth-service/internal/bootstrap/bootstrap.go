@@ -11,6 +11,7 @@ import (
 	"github.com/fathima-sithara/auth-service/internal/repository"
 	"github.com/fathima-sithara/auth-service/internal/services"
 	"github.com/fathima-sithara/auth-service/internal/twilio"
+	"github.com/fathima-sithara/auth-service/internal/utils"
 	"github.com/redis/go-redis/v9"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.uber.org/zap"
@@ -61,8 +62,15 @@ func Init() (*AppContext, CleanupFn, error) {
 	app.Twilio = twilio.NewClient(cfg.Twilio.AccountSID, cfg.Twilio.AuthToken, cfg.Twilio.From)
 	app.EmailJS = emailJS.NewClient(cfg.EmailJS.PublicKey, cfg.EmailJS.PrivateKey, cfg.EmailJS.ServiceID, cfg.EmailJS.TemplateID)
 
+	jwtMgr := utils.NewJWTManager(
+		cfg.App.JWT.PrivateKeyPath,
+		cfg.App.JWT.PublicKeyPath,
+		cfg.App.JWT.AccessTTLMinutes,
+		cfg.App.JWT.RefreshTTLDays,
+	)
+
 	userRepo := repository.NewMongoUserRepo(db, cfg.User.Collection)
-	authSvc := services.NewAuthService(userRepo, app.Twilio, app.EmailJS, rdb, cfg.App.JWT.Secret, cfg.App.JWT.AccessTTLMinutes, cfg.App.JWT.RefreshTTLDays, cfg.Security.OtpTTLMinutes, cfg.Security.OtpRateLimitPerPhonePerHour, logger)
+	authSvc := services.NewAuthService(userRepo, app.Twilio, app.EmailJS, rdb, jwtMgr, cfg.Security.OtpTTLMinutes, cfg.Security.OtpRateLimitPerPhonePerHour, logger)
 	app.Handler = handlers.NewHandler(authSvc, logger)
 
 	return app, func(ctx context.Context) {

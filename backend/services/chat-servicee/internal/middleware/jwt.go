@@ -4,31 +4,24 @@ import (
 	"crypto/rsa"
 	"crypto/x509"
 	"encoding/pem"
-	"io/ioutil"
 	"log"
+	"os"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
-	jwtware "github.com/gofiber/jwt/v3" // Fiber JWT middleware
+	jwtware "github.com/gofiber/jwt/v3"
 	"github.com/golang-jwt/jwt/v4"
 )
 
-// NewJWTMiddleware creates JWT middleware using RS256 public key
-func NewJWTMiddleware(pubKeyPath string) fiber.Handler {
-	keyBytes, err := ioutil.ReadFile(pubKeyPath)
-	if err != nil {
-		log.Fatalf("failed to read jwt public key: %v", err)
-	}
+// ========================== JWT MIDDLEWARE ==========================
 
-	pubKey, err := jwt.ParseRSAPublicKeyFromPEM(keyBytes)
-	if err != nil {
-		log.Fatalf("failed to parse public key: %v", err)
-	}
+func NewJWTMiddleware(pubKeyPath string) fiber.Handler {
+	pubKey := LoadRSAPublicKey(pubKeyPath)
 
 	return jwtware.New(jwtware.Config{
 		SigningMethod: "RS256",
 		SigningKey:    pubKey,
-		ContextKey:    "user", // JWT claims will be stored in context under "user"
+		ContextKey:    "user", // store claims => c.Locals("user")
 		AuthScheme:    "Bearer",
 		ErrorHandler: func(c *fiber.Ctx, err error) error {
 			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
@@ -37,54 +30,65 @@ func NewJWTMiddleware(pubKeyPath string) fiber.Handler {
 		},
 	})
 }
+
+// ========================== KEY LOADERS ==========================
+
+// Load RSA PRIVATE KEY (PKCS1)
 func LoadRSAPrivateKey(path string) *rsa.PrivateKey {
-	data, err := ioutil.ReadFile(path)
+	data, err := os.ReadFile(path)
 	if err != nil {
-		log.Fatalf("failed to read private key: %v", err)
+		log.Fatalf("❌ failed to read private key: %v", err)
 	}
 
 	block, _ := pem.Decode(data)
-	if block == nil || block.Type != "RSA PRIVATE KEY" {
-		log.Fatal("invalid PEM private key")
+	if block == nil {
+		log.Fatal("❌ invalid private key: PEM decode failed")
 	}
 
 	key, err := x509.ParsePKCS1PrivateKey(block.Bytes)
 	if err != nil {
-		log.Fatalf("failed to parse private key: %v", err)
+		log.Fatalf("❌ failed parsing private key: %v", err)
 	}
 	return key
 }
 
-// LoadRSAPublicKey loads an RSA public key from a PEM file
+// Load RSA PUBLIC KEY (supports PKCS1 + PKIX)
 func LoadRSAPublicKey(path string) *rsa.PublicKey {
-	data, err := ioutil.ReadFile(path)
+	data, err := os.ReadFile(path)
 	if err != nil {
-		log.Fatalf("failed to read public key: %v", err)
+		log.Fatalf("❌ failed to read public key: %v", err)
 	}
 
 	block, _ := pem.Decode(data)
-	if block == nil || block.Type != "PUBLIC KEY" {
-		log.Fatal("invalid PEM public key")
+	if block == nil {
+		log.Fatal("❌ invalid public key: PEM decode failed")
 	}
 
-	pub, err := x509.ParsePKIXPublicKey(block.Bytes)
+	// Try PKIX first
+	pubKey, err := x509.ParsePKIXPublicKey(block.Bytes)
+	if err == nil {
+		if rsaPub, ok := pubKey.(*rsa.PublicKey); ok {
+			return rsaPub
+		}
+	}
+
+	// Fallback: RSA PUBLIC KEY format
+	rsaPub, err := x509.ParsePKCS1PublicKey(block.Bytes)
 	if err != nil {
-		log.Fatalf("failed to parse public key: %v", err)
+		log.Fatalf("❌ failed parsing public key: %v", err)
 	}
 
-	rsaPub, ok := pub.(*rsa.PublicKey)
-	if !ok {
-		log.Fatal("not an RSA public key")
-	}
 	return rsaPub
 }
+
+// ========================== CLAIMS ==========================
 
 type CustomClaims struct {
 	UserID string `json:"user_id"`
 	jwt.RegisteredClaims
 }
 
-// SignJWT signs a token with the RSA private key
+// Sign a JWT using RSA private key
 func SignJWT(userID string, privateKey *rsa.PrivateKey, expiresIn time.Duration) (string, error) {
 	claims := CustomClaims{
 		UserID: userID,
@@ -98,17 +102,15 @@ func SignJWT(userID string, privateKey *rsa.PrivateKey, expiresIn time.Duration)
 	return token.SignedString(privateKey)
 }
 
-// VerifyJWT verifies a token with the RSA public key
+// Verify JWT using RSA public key
 func VerifyJWT(tokenStr string, publicKey *rsa.PublicKey) (*CustomClaims, error) {
 	token, err := jwt.ParseWithClaims(tokenStr, &CustomClaims{}, func(token *jwt.Token) (interface{}, error) {
 		return publicKey, nil
 	})
-	if err != nil {
+
+	if err != nil || !token.Valid {
 		return nil, err
 	}
 
-	if claims, ok := token.Claims.(*CustomClaims); ok && token.Valid {
-		return claims, nil
-	}
-	return nil, jwt.ErrTokenInvalidClaims
+	return token.Claims.(*CustomClaims), nil
 }
