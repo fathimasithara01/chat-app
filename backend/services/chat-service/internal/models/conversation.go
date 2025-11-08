@@ -1,11 +1,14 @@
 package models
 
-import "time"
+import (
+    "time"
+
+    "go.mongodb.org/mongo-driver/bson/primitive"
+)
 
 type Conversation struct {
-	ID        string   `bson:"_id,omitempty" json:"id"`
-	Type      string   `bson:"type" json:"type"`
-	Members   []string `bson:"members" json:"members"`
-	Title     string   `bson:"title,omitempty" json:"title,omitempty"`
-	CreatedAt time.Time `bson:"created_at" json:"created_at"`
+    ID         primitive.ObjectID `bson:"_id,omitempty" json:"id"`
+    Members    []string           `bson:"members" json:"members"`
+    CreatedAt  time.Time          `bson:"created_at" json:"created_at"`
+    UpdatedAt  time.Time          `bson:"updated_at" json:"updated_at"`
 }
