@@ -7,16 +7,17 @@ import (
 	"syscall"
 
 	"github.com/fathima-sithara/chat-service/config"
+	"github.com/fathima-sithara/chat-service/internal/middleware"
 	"github.com/fathima-sithara/chat-service/internal/server"
 	"github.com/rs/zerolog/log"
 )
 
 func main() {
 	cfg := config.Load()
+	jwtMw := middleware.NewJWTMiddleware(cfg.JWTPublicKeyPath)
 
 	// Create server
-	srv, closeFn := server.New(cfg)
-
+	srv, closeFn := server.New(cfg, jwtMw)
 	// Start Fiber server
 	go func() {
 		if err := srv.Listen(":" + cfg.AppPort); err != nil {
