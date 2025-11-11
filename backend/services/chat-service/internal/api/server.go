@@ -65,7 +65,4 @@ func JWTAuthMiddleware(jv *auth.JWTValidator) fiber.Handler {
 	}
 }
 
-// Handlers (sendMessage, listMessages, markRead, editMessage, deleteMessage, mediaUploadURL, lastMessage)
-// Implement similarly to message-service: call cmd/qry and broadcast via ws
-// For brevity, reuse your message-service handler patterns.
 
