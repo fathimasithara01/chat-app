@@ -7,27 +7,25 @@ import (
 	"os/signal"
 	"time"
 
-	"github.com/joho/godotenv"
-
 	"github.com/fathima-sithara/chat-service/internal/api"
-	cfgpkg "github.com/fathima-sithara/chat-service/internal/config"
+	"github.com/fathima-sithara/chat-service/internal/config"
 	"github.com/fathima-sithara/chat-service/internal/kafka"
 	"github.com/fathima-sithara/chat-service/internal/repository"
 	"github.com/fathima-sithara/chat-service/internal/service"
 	"github.com/fathima-sithara/chat-service/internal/ws"
+	"github.com/joho/godotenv"
 	"github.com/redis/go-redis/v9"
 )
 
 func main() {
 	_ = godotenv.Load() // load .env if present
 
-	cfg, err := cfgpkg.Load()
+	cfg, err := config.Load()
 	if err != nil {
 		log.Fatalf("config load: %v", err)
 	}
 
-	// Mongo client
-	mc, err := repository.NewMongoClient(cfg)
+	mc, err := repository.NewMongoClient()
 	if err != nil {
 		log.Fatalf("mongo init: %v", err)
 	}

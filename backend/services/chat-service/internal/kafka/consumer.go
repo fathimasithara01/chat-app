@@ -2,47 +2,44 @@ package kafka
 
 import (
 	"context"
-	"encoding/json"
+	"log"
 	"time"
 
-	"github.com/fathima-sithara/chat-service/config"
-	"github.com/rs/zerolog/log"
 	"github.com/segmentio/kafka-go"
 )
 
-// Broadcaster interface now passed in instead of concrete ws.Hub
-type Broadcaster interface {
-	BroadcastJSON(msg any)
-}
-
 type Consumer struct {
 	reader *kafka.Reader
-	cfg    *config.Config
 }
 
-func NewConsumer(cfg *config.Config) *Consumer {
+func NewConsumer(brokers []string, topic string, groupID string) *Consumer {
 	r := kafka.NewReader(kafka.ReaderConfig{
-		Brokers: cfg.KafkaBrokers,
-		Topic:   cfg.KafkaTopicIn,
-		GroupID: "chat-service-group",
+		Brokers:  brokers,
+		Topic:    topic,
+		GroupID:  groupID,
+		MinBytes: 1,
+		MaxBytes: 10e6,
 	})
-	return &Consumer{reader: r, cfg: cfg}
+	return &Consumer{reader: r}
 }
 
-// Run now uses the interface
-func (c *Consumer) Run(b Broadcaster) {
+// start handler loop (blocking) - caller should run in goroutine
+func (c *Consumer) Start(handle func(key string, value []byte)) {
 	ctx := context.Background()
 	for {
 		m, err := c.reader.ReadMessage(ctx)
 		if err != nil {
-			log.Error().Err(err).Msg("kafka read")
-			time.Sleep(1 * time.Second)
+			log.Printf("kafka read error: %v", err)
+			time.Sleep(time.Second)
 			continue
 		}
-		var payload map[string]any
-		_ = json.Unmarshal(m.Value, &payload)
-		b.BroadcastJSON(payload) // call interface method
+		handle(string(m.Key), m.Value)
 	}
 }
 
-func (c *Consumer) Close() error { return c.reader.Close() }
+func (c *Consumer) Close(ctx context.Context) error {
+	if c.reader == nil {
+		return nil
+	}
+	return c.reader.Close()
+}

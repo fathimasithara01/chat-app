@@ -1,98 +1,49 @@
 package ws
 
-import (
-	"context"
-	"encoding/json"
-	"sync"
-
-	"github.com/fathima-sithara/chat-service/internal/cache"
-	"github.com/fathima-sithara/chat-service/internal/kafka"
-	"github.com/fathima-sithara/chat-service/internal/repository"
-	"github.com/gofiber/websocket/v2"
-	"github.com/google/uuid"
-	"github.com/rs/zerolog/log"
-)
+import "sync"
 
 type Hub struct {
-	clients  map[string]map[string]*websocket.Conn
-	mu       sync.RWMutex
-	repo     *repository.MongoRepository
-	producer *kafka.Producer
-	cache    *cache.Client
-	stop     chan struct{}
+	rooms map[string]map[*Connection]bool
+	mu    sync.RWMutex
 }
 
-func NewHub(repo *repository.MongoRepository, producer *kafka.Producer, cache *cache.Client) *Hub {
-	return &Hub{clients: make(map[string]map[string]*websocket.Conn), repo: repo, producer: producer, cache: cache, stop: make(chan struct{})}
+func NewHub() *Hub {
+	return &Hub{rooms: make(map[string]map[*Connection]bool)}
 }
 
-func (h *Hub) Run() {
-	<-h.stop
-	log.Info().Msg("hub stopped")
-}
-
-func (h *Hub) Close() { close(h.stop) }
-
-func (h *Hub) HandleWebsocket(conn *websocket.Conn) {
-	defer conn.Close()
-	userID := conn.Query("user_id")
-	if userID == "" {
-		userID = uuid.NewString()
-	}
-	cid := uuid.NewString()
-
+func (h *Hub) Register(chatID string, c *Connection) {
 	h.mu.Lock()
-	if _, ok := h.clients[userID]; !ok {
-		h.clients[userID] = make(map[string]*websocket.Conn)
+	defer h.mu.Unlock()
+	if h.rooms[chatID] == nil {
+		h.rooms[chatID] = make(map[*Connection]bool)
 	}
-	h.clients[userID][cid] = conn
-	h.mu.Unlock()
-	_ = h.cache.SetPresence(context.Background(), userID, true)
+	h.rooms[chatID][c] = true
+}
 
-	log.Info().Str("user", userID).Str("conn", cid).Msg("ws connected")
-
-	for {
-		var msg map[string]any
-		if err := conn.ReadJSON(&msg); err != nil {
-			log.Error().Err(err).Msg("read json")
-			break
-		}
-		if t, ok := msg["type"].(string); ok && t == "message" {
-			b, _ := json.Marshal(msg)
-			_ = h.producer.PublishMessage(context.Background(), userID, b)
-			if to, ok := msg["to"].(string); ok {
-				h.SendToUser(to, msg)
-			}
+func (h *Hub) Unregister(chatID string, c *Connection) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if conns, ok := h.rooms[chatID]; ok {
+		delete(conns, c)
+		if len(conns) == 0 {
+			delete(h.rooms, chatID)
 		}
 	}
-
-	h.mu.Lock()
-	delete(h.clients[userID], cid)
-	if len(h.clients[userID]) == 0 {
-		delete(h.clients, userID)
-		_ = h.cache.SetPresence(context.Background(), userID, false)
-	}
-	h.mu.Unlock()
 }
 
-func (h *Hub) SendToUser(userID string, payload any) {
+func (h *Hub) Broadcast(chatID string, msg interface{}) {
 	h.mu.RLock()
-	conns, ok := h.clients[userID]
+	conns := h.rooms[chatID]
 	h.mu.RUnlock()
-	if !ok {
+	if conns == nil {
 		return
 	}
-	for _, c := range conns {
-		_ = c.WriteJSON(payload)
-	}
-}
-
-func (h *Hub) BroadcastJSON(payload any) {
-	h.mu.RLock()
-	defer h.mu.RUnlock()
-	for _, conns := range h.clients {
-		for _, c := range conns {
-			_ = c.WriteJSON(payload)
+	for c := range conns {
+		select {
+		case c.send <- msg:
+		default:
+			h.Unregister(chatID, c)
+			close(c.send)
 		}
 	}
 }
