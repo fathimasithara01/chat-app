@@ -1,0 +1,33 @@
+version: "3.8"
+services:
+  mongo:
+    image: mongo:6
+    ports: ["27017:27017"]
+    volumes: ["mongo_data:/data/db"]
+
+  redis:
+    image: redis:7
+    ports: ["6379:6379"]
+
+  zookeeper:
+    image: bitnami/zookeeper:latest
+    environment:
+      - ALLOW_ANONYMOUS_LOGIN=yes
+    ports:
+      - "2181:2181"
+
+  kafka:
+    image: bitnami/kafka:latest
+    environment:
+      - KAFKA_BROKER_ID=1
+      - KAFKA_ZOOKEEPER_CONNECT=zookeeper:2181
+      - KAFKA_LISTENERS=PLAINTEXT://:9092
+      - KAFKA_ADVERTISED_LISTENERS=PLAINTEXT://kafka:9092
+      - ALLOW_PLAINTEXT_LISTENER=yes
+    ports:
+      - "9092:9092"
+    depends_on:
+      - zookeeper
+
+volumes:
+  mongo_data:
