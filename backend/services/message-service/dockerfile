@@ -1,16 +1,13 @@
-# builder
-FROM golang:1.25-alpine AS builder
+FROM golang:1.21-alpine AS builder
 WORKDIR /src
-RUN apk add --no-cache git ca-certificates
-COPY go.mod go.sum ./
-RUN go mod download
 COPY . .
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /message-service ./cmd
+RUN apk add --no-cache git
+RUN go build -o /bin/message-service ./cmd
 
-# runtime
-FROM alpine:3.18
+FROM alpine:latest
 RUN apk add --no-cache ca-certificates
+COPY --from=builder /bin/message-service /bin/message-service
+COPY config.yaml /app/config.yaml
 WORKDIR /app
-COPY --from=builder /message-service /app/message-service
 EXPOSE 8085
-ENTRYPOINT ["/app/message-service"]
+CMD ["/bin/message-service"]
