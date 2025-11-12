@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/fathima-sithara/chat-service/internal/api"
+	"github.com/fathima-sithara/chat-service/internal/auth"
 	"github.com/fathima-sithara/chat-service/internal/config"
 	"github.com/fathima-sithara/chat-service/internal/kafka"
 	"github.com/fathima-sithara/chat-service/internal/repository"
@@ -48,8 +49,12 @@ func main() {
 	cmdSvc := service.NewCommandService(repo, rdb, kprod, cfg)
 	qrySvc := service.NewQueryService(repo, rdb, cfg)
 
+	jv, err := auth.NewJWTValidator(cfg.JWT.PublicKeyPath)
+	if err != nil {
+		panic(err)
+	}
 	// websocket server
-	wsrv := ws.NewServer(cmdSvc, qrySvc)
+	wsrv := ws.NewServer(cmdSvc, qrySvc, jv)
 
 	// start kafka consumer in background
 	go kcons.Start(func(key string, value []byte) {
@@ -57,6 +62,8 @@ func main() {
 		// keep minimal: try broadcast raw event to corresponding chat-id if present in event (message.json)
 		wsrv.HandleEventMessage(key, value)
 	})
+
+	// websocket server needs JWT validator
 
 	// api server
 	app := api.NewServer(cfg, cmdSvc, qrySvc, wsrv)

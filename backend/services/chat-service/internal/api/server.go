@@ -14,52 +14,93 @@ type Server struct {
 	cmd *service.CommandService
 	qry *service.QueryService
 	ws  *ws.Server
-	app *fiber.App
 }
 
+// NewServer creates a Fiber app with REST + WebSocket routes
 func NewServer(cfg *config.Config, cmd *service.CommandService, qry *service.QueryService, wsrv *ws.Server) *fiber.App {
 	app := fiber.New()
-	// load JWT validator
-	jv, err := auth.NewJWTValidator(cfg.JWT.PublicKeyPath)
-	if err != nil {
-		panic("jwt validator: " + err.Error())
-	}
-
-	s := &Server{cmd: cmd, qry: qry, ws: wsrv, app: app}
 	app.Use(logger.New())
+
+	s := &Server{cmd: cmd, qry: qry, ws: wsrv} // store the WS server
 
 	api := app.Group("/v1")
 
-	api.Use(JWTAuthMiddleware(jv))
-
+	// REST API with JWT middleware
+	api.Use(JWTMiddleware(wsrv.JWT())) // use getter to access JWTValidator
 	api.Post("/messages", s.sendMessage)
 	api.Get("/chats/:chat_id/messages", s.listMessages)
 	api.Post("/messages/:msg_id/read", s.markRead)
 	api.Patch("/messages/:msg_id", s.editMessage)
 	api.Delete("/messages/:msg_id", s.deleteMessage)
-	api.Get("/ws", websocket.New(s.ws.WSHandler()))
 	api.Post("/media/upload-url", s.mediaUploadURL)
 	api.Get("/chats/:chat_id/last-message", s.lastMessage)
+
+	api.Get("/ws", websocket.New(func(wsConn *websocket.Conn) {
+		defer wsConn.Close()
+
+		// token from query param
+		token := wsConn.Query("token")
+		if token == "" {
+			wsConn.WriteMessage(websocket.CloseMessage,
+				websocket.FormatCloseMessage(websocket.ClosePolicyViolation, "token required"))
+			return
+		}
+
+		// remove Bearer if present
+		const prefix = "Bearer "
+		if len(token) > len(prefix) && token[:len(prefix)] == prefix {
+			token = token[len(prefix):]
+		}
+
+		userID, err := wsrv.JWT().Validate(token)
+		if err != nil {
+			wsConn.WriteMessage(websocket.CloseMessage,
+				websocket.FormatCloseMessage(websocket.ClosePolicyViolation, "unauthorized"))
+			return
+		}
+
+		chatID := wsConn.Query("chat_id")
+		if chatID == "" {
+			wsConn.WriteMessage(websocket.CloseMessage,
+				websocket.FormatCloseMessage(websocket.ClosePolicyViolation, "chat_id required"))
+			return
+		}
+
+		conn := &ws.Connection{
+			WS:     wsConn,
+			Send:   make(chan interface{}, 256),
+			UserID: userID,
+			ChatID: chatID,
+			Hub:    wsrv.Hub(),
+		}
+
+		wsrv.Hub().Register(chatID, conn)
+		go conn.WritePump()
+		conn.ReadPump()
+	}))
 
 	return app
 }
 
-func JWTAuthMiddleware(jv *auth.JWTValidator) fiber.Handler {
+// JWTMiddleware protects REST endpoints
+func JWTMiddleware(jv *auth.JWTValidator) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		h := c.Get("Authorization")
 		if h == "" {
 			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "missing auth"})
 		}
-		// Expect "Bearer <token>"
+
 		const pref = "Bearer "
 		if len(h) <= len(pref) || h[:len(pref)] != pref {
 			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "invalid auth"})
 		}
+
 		token := h[len(pref):]
 		sub, err := jv.Validate(token)
 		if err != nil {
 			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": err.Error()})
 		}
+
 		c.Locals("user_id", sub)
 		return c.Next()
 	}

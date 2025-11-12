@@ -27,7 +27,6 @@ func (s *Server) sendMessage(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusInternalServerError, err.Error())
 	}
 
-	// Broadcast via WS hub
 	s.ws.Hub().Broadcast(req.ChatID, fiber.Map{
 		"event":   "message_created",
 		"message": msg,
