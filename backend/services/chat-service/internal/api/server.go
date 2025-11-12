@@ -64,5 +64,3 @@ func JWTAuthMiddleware(jv *auth.JWTValidator) fiber.Handler {
 		return c.Next()
 	}
 }
-
-
