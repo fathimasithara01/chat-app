@@ -34,7 +34,6 @@ func NewJWTValidator(path string) (*JWTValidator, error) {
 	return &JWTValidator{pub: pub}, nil
 }
 
-// Verify token, return sub (user id)
 func (j *JWTValidator) Validate(tokenStr string) (string, error) {
 	tok, err := jwt.Parse(tokenStr, func(t *jwt.Token) (interface{}, error) {
 		return j.pub, nil
@@ -45,6 +44,9 @@ func (j *JWTValidator) Validate(tokenStr string) (string, error) {
 	if claims, ok := tok.Claims.(jwt.MapClaims); ok && tok.Valid {
 		if sub, ok := claims["sub"].(string); ok {
 			return sub, nil
+		}
+		if userID, ok := claims["user_id"].(string); ok {
+			return userID, nil // <- use this
 		}
 	}
 	return "", errors.New("invalid token")
