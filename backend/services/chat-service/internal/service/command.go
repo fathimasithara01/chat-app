@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"time"
 
@@ -26,14 +27,25 @@ func NewCommandService(r *repo.MongoRepository, rdb *redis.Client, prod *kafka.P
 	return &CommandService{repo: r, cache: rdb, prod: prod, cfg: cfg}
 }
 
+//	type SendMessageDTO struct {
+//		ChatID   string
+//		SenderID string
+//		Content  string
+//		MsgType  string
+//		MsgID    string
+//		Metadata map[string]string
+//		ReplyTo  string
+//	}
 type SendMessageDTO struct {
-	ChatID   string
-	SenderID string
-	Content  string
-	MsgType  string
-	MsgID    string
-	Metadata map[string]string
-	ReplyTo  string
+	ChatID    string
+	SenderID  string
+	Content   string
+	MsgType   string
+	MsgID     string
+	Metadata  map[string]string
+	ReplyTo   string
+	MediaURL  string
+	Thumbnail string
 }
 
 func (s *CommandService) CreateMessage(ctx context.Context, dto *SendMessageDTO) (*domain.Message, error) {
@@ -89,23 +101,6 @@ func (s *CommandService) MarkRead(ctx context.Context, msgID, userID string) (st
 	return chatID, nil
 }
 
-// func (s *CommandService) DeleteMessage(ctx context.Context, msgID, userID, forParam string) (string, error) {
-// 	if forParam == "me" {
-// 		chatID, err := s.repo.SoftDeleteMessage(ctx, msgID, userID)
-// 		if err != nil {
-// 			return "", err
-// 		}
-// 		_ = s.prod.PublishMessage(ctx, msgID, map[string]interface{}{"event": "message.deleted", "msg_id": msgID, "for": "me", "user": userID})
-// 		return chatID, nil
-// 	}
-// 	chatID, err := s.repo.DeleteMessageForAll(ctx, msgID)
-// 	if err != nil {
-// 		return "", err
-// 	}
-// 	_ = s.prod.PublishMessage(ctx, msgID, map[string]interface{}{"event": "message.deleted", "msg_id": msgID, "for": "all"})
-// 	return chatID, nil
-// }
-
 func (s *CommandService) AddReaction(ctx context.Context, msgID, emoji, userID string) (string, error) {
 	chatID, err := s.repo.AddReaction(ctx, msgID, emoji, userID)
 	if err != nil {
@@ -120,20 +115,37 @@ func (s *CommandService) GetMediaUploadURL(ctx context.Context, fileType string,
 	return "https://example-storage.local/upload/" + time.Now().Format("20060102150405"), nil
 }
 
-// Public API used by HTTP handlers
-
 type SendMessageCommand struct {
-	ChatID  string
-	UserID  string
-	Content string
+	ChatID    string
+	UserID    string
+	Content   string
+	MsgType   string
+	ReplyTo   string
+	MediaURL  string
+	Thumbnail string
 }
 
 func (s *CommandService) SendMessage(ctx context.Context, cmd SendMessageCommand) (*domain.Message, error) {
+
+	// Validation
+	if cmd.ChatID == "" || cmd.UserID == "" {
+		return nil, errors.New("chat_id and user_id required")
+	}
+	if cmd.MsgType == "text" && cmd.Content == "" {
+		return nil, errors.New("content required for text message")
+	}
+	// if cmd.MsgType != "text" && cmd.MediaURL == "" {
+	// 	return nil, errors.New("media_url required for media messages")
+	// }
+
 	return s.CreateMessage(ctx, &SendMessageDTO{
-		ChatID:   cmd.ChatID,
-		SenderID: cmd.UserID,
-		Content:  cmd.Content,
-		MsgType:  "text",
+		ChatID:    cmd.ChatID,
+		SenderID:  cmd.UserID,
+		Content:   cmd.Content,
+		MsgType:   cmd.MsgType, // <-- FIXED
+		ReplyTo:   cmd.ReplyTo,
+		MediaURL:  cmd.MediaURL,  // <-- include if you use media
+		Thumbnail: cmd.Thumbnail, // <-- include if needed
 	})
 }
 
@@ -141,16 +153,6 @@ func (s *CommandService) MarkAsRead(ctx context.Context, msgID, userID string) e
 	_, err := s.MarkRead(ctx, msgID, userID)
 	return err
 }
-
-// func (s *CommandService) EditMessage(ctx context.Context, msgID, userID, content string) (*domain.Message, error) {
-// 	// Ensure message belongs to user before edit
-// 	// (optional authorization check via repo)
-// 	_, m, err := s.EditMessage(ctx, msgID, content)
-// 	if err != nil {
-// 		return nil, err
-// 	}
-// 	return m, nil
-// }
 
 func (s *CommandService) EditMessage(ctx context.Context, msgID, userID, newContent string) (*domain.Message, error) {
 	// 1) fetch existing message
@@ -164,21 +166,16 @@ func (s *CommandService) EditMessage(ctx context.Context, msgID, userID, newCont
 		return nil, fmt.Errorf("unauthorized: only sender can edit message")
 	}
 
-	// 3) encrypt/encode new content (here we base64-encode as in other places)
 	enc := base64.StdEncoding.EncodeToString([]byte(newContent))
 	now := time.Now().UTC()
 
-	// 4) update via repo.EditMessage (this updates content and edited_at, returns chatID)
 	_, err = s.repo.EditMessage(ctx, msgID, enc, now)
 	if err != nil {
 		return nil, err
 	}
 
-	// 5) prepare updated message to return
-	// Option A: re-fetch from DB for the canonical updated document
 	updated, err := s.repo.GetMessageByID(ctx, msgID)
 	if err != nil {
-		// repo updated but re-fetch failed; return fallback constructed object
 		return &domain.Message{
 			ID:         msgID,
 			ChatID:     m.ChatID,
@@ -197,7 +194,6 @@ func (s *CommandService) EditMessage(ctx context.Context, msgID, userID, newCont
 		}, nil
 	}
 
-	// decode base64 content before returning
 	if updated.Content != "" {
 		if b, err := base64.StdEncoding.DecodeString(updated.Content); err == nil {
 			updated.Content = string(b)

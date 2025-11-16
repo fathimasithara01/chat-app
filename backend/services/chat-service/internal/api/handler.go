@@ -5,9 +5,17 @@ import (
 	"github.com/gofiber/fiber/v2"
 )
 
+//	type sendMessageReq struct {
+//		ChatID  string `json:"chat_id" validate:"required"`
+//		Content string `json:"content" validate:"required"`
+//	}
 type sendMessageReq struct {
-	ChatID  string `json:"chat_id" validate:"required"`
-	Content string `json:"content" validate:"required"`
+	ChatID   string `json:"chat_id" validate:"required"`
+	Content  string `json:"content"`
+	MsgType  string `json:"msg_type" validate:"required,oneof=text image audio video file"`
+	ReplyTo  string `json:"reply_to,omitempty"`
+	MediaURL string `json:"media_url"`
+	// Thumbnail string `json:"thumbnail,omitempty"`
 }
 
 func (s *Server) sendMessage(c *fiber.Ctx) error {
@@ -16,12 +24,27 @@ func (s *Server) sendMessage(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusBadRequest, "invalid payload")
 	}
 
+	if req.MsgType == "text" {
+		if req.Content == "" {
+			return fiber.NewError(fiber.StatusBadRequest, "content required for text messages")
+		}
+	} else {
+		// For media messages
+		if req.MediaURL == "" {
+			return fiber.NewError(fiber.StatusBadRequest, "media_url required for media messages")
+		}
+	}
+
 	userID := c.Locals("user_id").(string)
 
 	msg, err := s.cmd.SendMessage(c.Context(), service.SendMessageCommand{
-		ChatID:  req.ChatID,
-		UserID:  userID,
-		Content: req.Content,
+		ChatID:   req.ChatID,
+		UserID:   userID,
+		Content:  req.Content,
+		MsgType:  req.MsgType,
+		ReplyTo:  req.ReplyTo,
+		MediaURL: req.MediaURL,
+		// Thumbnail: req.Thumbnail,
 	})
 	if err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, err.Error())
@@ -32,7 +55,12 @@ func (s *Server) sendMessage(c *fiber.Ctx) error {
 		"message": msg,
 	})
 
-	return c.JSON(msg)
+	// return c.JSON(msg)
+	return c.JSON(fiber.Map{
+		"message": msg,
+		"status":  "sent",
+	})
+
 }
 
 func (s *Server) listMessages(c *fiber.Ctx) error {
