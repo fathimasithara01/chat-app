@@ -57,3 +57,5 @@ services:
 volumes:
   mongo_data:
   minio_data:
+
+encryption_key: "f93Ksl20Dk39sL20f9Dk39sL20Dk39sl"
