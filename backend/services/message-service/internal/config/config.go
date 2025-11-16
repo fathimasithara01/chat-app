@@ -61,7 +61,6 @@ func Load() (*Config, error) {
 		JWT: JWT{PublicKeyPath: "./keys/jwt_pub.pem"},
 	}
 
-	// load config file if present
 	if _, err := os.Stat("config/config.yaml"); err == nil {
 		b, err := os.ReadFile("config/config.yaml")
 		if err != nil {
@@ -72,7 +71,6 @@ func Load() (*Config, error) {
 		}
 	}
 
-	// environment overrides (optional)
 	if v := os.Getenv("MONGODB_URI"); v != "" {
 		cfg.Database.URI = v
 	}
@@ -89,7 +87,6 @@ func Load() (*Config, error) {
 		cfg.JWT.PublicKeyPath = v
 	}
 
-	// basic checks
 	if cfg.Database.URI == "" {
 		return nil, errors.New("database.uri required")
 	}

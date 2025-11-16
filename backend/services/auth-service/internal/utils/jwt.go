@@ -1,151 +1,163 @@
 package utils
 
-// import (
-// 	"errors"
-// 	"fmt"
-// 	"time"
+import (
+	"crypto/rsa"
+	"crypto/x509"
+	"encoding/pem"
+	"errors"
+	"io/ioutil"
+	"log"
+	"time"
 
-// 	"github.com/golang-jwt/jwt/v5"
-// )
+	"github.com/golang-jwt/jwt/v5"
+)
 
-// type JWTManager struct {
-// 	secret     string
-// 	accessTTL  time.Duration
-// 	refreshTTL time.Duration
-// }
+type JWTManager struct {
+	privateKey *rsa.PrivateKey
+	publicKey  *rsa.PublicKey
+	accessTTL  time.Duration
+	refreshTTL time.Duration
+}
 
-// var (
-// 	ErrNotAccessToken       = errors.New("not an access token")
-// 	ErrInvalidToken         = errors.New("invalid token")
-// 	ErrUserIDMissing        = errors.New("user ID missing in token claims")
-// 	ErrNotRefreshToken      = errors.New("not a refresh token")
-// 	ErrTokenExpired         = errors.New("token is expired")
-// 	ErrInvalidSigningMethod = errors.New("unexpected signing method")
-// )
+type CustomClaims struct {
+	UserID string `json:"user_id"`
+	jwt.RegisteredClaims
+}
 
-// type claims struct {
-// 	UserID string `json:"sub"`
-// 	jwt.RegisteredClaims
-// }
+var (
+	ErrTokenExpired = errors.New("token expired")
+	ErrInvalidToken = errors.New("invalid token")
+)
 
-// func NewJWTManager(secret string, accessMins int, refreshDays int) *JWTManager {
-// 	return &JWTManager{
-// 		secret:     secret,
-// 		accessTTL:  time.Duration(accessMins) * time.Minute,
-// 		refreshTTL: time.Duration(refreshDays) * 24 * time.Hour,
-// 	}
-// }
+// Load RSA Private Key
+func LoadRSAPrivateKey(path string) *rsa.PrivateKey {
+	data, err := ioutil.ReadFile(path)
+	if err != nil {
+		log.Fatalf("failed to read private key: %v", err)
+	}
+	block, _ := pem.Decode(data)
+	if block == nil || block.Type != "RSA PRIVATE KEY" {
+		log.Fatal("invalid PEM private key")
+	}
+	key, err := x509.ParsePKCS1PrivateKey(block.Bytes)
+	if err != nil {
+		log.Fatalf("failed to parse private key: %v", err)
+	}
+	return key
+}
 
-// func (j *JWTManager) GenerateAccess(userID string) (string, time.Time, error) {
-// 	exp := time.Now().Add(j.accessTTL)
-// 	claims := &claims{
-// 		UserID: userID,
-// 		RegisteredClaims: jwt.RegisteredClaims{
-// 			ExpiresAt: jwt.NewNumericDate(exp),
-// 			IssuedAt:  jwt.NewNumericDate(time.Now()),
-// 			NotBefore: jwt.NewNumericDate(time.Now()),
-// 			Audience:  jwt.ClaimStrings{"access"},
-// 		},
-// 	}
-// 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-// 	s, err := token.SignedString([]byte(j.secret))
-// 	if err != nil {
-// 		return "", time.Time{}, fmt.Errorf("failed to sign access token: %w", err)
-// 	}
-// 	return s, exp, nil
-// }
+// Load RSA Public Key
+func LoadRSAPublicKey(path string) *rsa.PublicKey {
+	data, err := ioutil.ReadFile(path)
+	if err != nil {
+		log.Fatalf("failed to read public key: %v", err)
+	}
+	block, _ := pem.Decode(data)
+	if block == nil || (block.Type != "PUBLIC KEY" && block.Type != "RSA PUBLIC KEY") {
+		log.Fatal("invalid PEM public key")
+	}
+	pub, err := x509.ParsePKIXPublicKey(block.Bytes)
+	if err != nil {
+		log.Fatalf("failed to parse public key: %v", err)
+	}
+	rsaPub, ok := pub.(*rsa.PublicKey)
+	if !ok {
+		log.Fatal("not an RSA public key")
+	}
+	return rsaPub
+}
 
-// func (j *JWTManager) GenerateRefresh(userID string) (string, time.Time, error) {
-// 	exp := time.Now().Add(j.refreshTTL)
-// 	claims := &claims{
-// 		UserID: userID,
-// 		RegisteredClaims: jwt.RegisteredClaims{
-// 			ExpiresAt: jwt.NewNumericDate(exp),
-// 			IssuedAt:  jwt.NewNumericDate(time.Now()),
-// 			NotBefore: jwt.NewNumericDate(time.Now()),
-// 			Audience:  jwt.ClaimStrings{"refresh"},
-// 		},
-// 	}
-// 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-// 	s, err := token.SignedString([]byte(j.secret))
-// 	if err != nil {
-// 		return "", time.Time{}, fmt.Errorf("failed to sign refresh token: %w", err)
-// 	}
-// 	return s, exp, nil
-// }
+// Create new JWT manager
+func NewJWTManager(privPath, pubPath string, accessMinutes int, refreshDays int) *JWTManager {
+	return &JWTManager{
+		privateKey: LoadRSAPrivateKey(privPath),
+		publicKey:  LoadRSAPublicKey(pubPath),
+		accessTTL:  time.Duration(accessMinutes) * time.Minute,
+		refreshTTL: time.Duration(refreshDays) * 24 * time.Hour,
+	}
+}
 
-// func (j *JWTManager) Verify(tokenStr string) (*claims, error) {
-// 	token, err := jwt.ParseWithClaims(tokenStr, &claims{}, func(token *jwt.Token) (interface{}, error) {
-// 		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
-// 			return nil, ErrInvalidSigningMethod
-// 		}
-// 		return []byte(j.secret), nil
-// 	}, jwt.WithValidMethods([]string{"HS256"}))
+// Generate Access Token
+func (j *JWTManager) GenerateAccessToken(userID string) (string, time.Time, error) {
+	exp := time.Now().Add(j.accessTTL)
+	claims := &CustomClaims{
+		UserID: userID,
+		RegisteredClaims: jwt.RegisteredClaims{
+			ExpiresAt: jwt.NewNumericDate(exp),
+			IssuedAt:  jwt.NewNumericDate(time.Now()),
+			Audience:  jwt.ClaimStrings{"access"},
+		},
+	}
+	token := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
+	signed, err := token.SignedString(j.privateKey)
+	return signed, exp, err
+}
 
-// 	if err != nil {
-// 		if errors.Is(err, jwt.ErrTokenExpired) || errors.Is(err, jwt.ErrTokenNotValidYet) {
-// 			return nil, ErrTokenExpired
-// 		}
-// 		return nil, fmt.Errorf("%w: %v", ErrInvalidToken, err)
-// 	}
+// Generate Refresh Token
+func (j *JWTManager) GenerateRefreshToken(userID string) (string, time.Time, error) {
+	exp := time.Now().Add(j.refreshTTL)
+	claims := &CustomClaims{
+		UserID: userID,
+		RegisteredClaims: jwt.RegisteredClaims{
+			ExpiresAt: jwt.NewNumericDate(exp),
+			IssuedAt:  jwt.NewNumericDate(time.Now()),
+			Audience:  jwt.ClaimStrings{"refresh"},
+		},
+	}
+	token := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
+	signed, err := token.SignedString(j.privateKey)
+	return signed, exp, err
+}
 
-// 	if !token.Valid {
-// 		return nil, ErrInvalidToken
-// 	}
+// Verify token
+func (j *JWTManager) VerifyToken(tokenStr string) (*CustomClaims, error) {
+	token, err := jwt.ParseWithClaims(tokenStr, &CustomClaims{}, func(token *jwt.Token) (interface{}, error) {
+		if _, ok := token.Method.(*jwt.SigningMethodRSA); !ok {
+			return nil, ErrInvalidToken
+		}
+		return j.publicKey, nil
+	})
+	if err != nil {
+		if errors.Is(err, jwt.ErrTokenExpired) {
+			return nil, ErrTokenExpired
+		}
+		return nil, ErrInvalidToken
+	}
+	if claims, ok := token.Claims.(*CustomClaims); ok && token.Valid {
+		return claims, nil
+	}
+	return nil, ErrInvalidToken
+}
 
-// 	customClaims, ok := token.Claims.(*claims)
-// 	if !ok {
-// 		return nil, ErrInvalidToken
-// 	}
+// Parse Access
+func (j *JWTManager) ParseAccess(tokenStr string) (string, error) {
+	claims, err := j.VerifyToken(tokenStr)
+	if err != nil {
+		return "", err
+	}
+	if !containsAudience(claims.Audience, "access") {
+		return "", errors.New("not an access token")
+	}
+	return claims.UserID, nil
+}
 
-// 	if customClaims.UserID == "" {
-// 		return nil, ErrUserIDMissing
-// 	}
+// Parse Refresh
+func (j *JWTManager) ParseRefresh(tokenStr string) (string, error) {
+	claims, err := j.VerifyToken(tokenStr)
+	if err != nil {
+		return "", err
+	}
+	if !containsAudience(claims.Audience, "refresh") {
+		return "", errors.New("not a refresh token")
+	}
+	return claims.UserID, nil
+}
 
-// 	return customClaims, nil
-// }
-
-// func containsAudience(audiences jwt.ClaimStrings, target string) bool {
-// 	for _, aud := range audiences {
-// 		if aud == target {
-// 			return true
-// 		}
-// 	}
-// 	return false
-// }
-
-// func (j *JWTManager) ParseRefresh(tokenStr string) (string, error) {
-// 	customClaims, err := j.Verify(tokenStr)
-// 	if err != nil {
-// 		return "", err
-// 	}
-
-// 	if !containsAudience(customClaims.RegisteredClaims.Audience, "refresh") {
-// 		return "", ErrNotRefreshToken
-// 	}
-
-// 	return customClaims.UserID, nil
-// }
-
-// func (j *JWTManager) ParseAccess(tokenStr string) (string, error) {
-// 	customClaims, err := j.Verify(tokenStr)
-// 	if err != nil {
-// 		return "", err
-// 	}
-
-// 	if !containsAudience(customClaims.RegisteredClaims.Audience, "access") {
-// 		return "", ErrNotAccessToken
-// 	}
-
-// 	return customClaims.UserID, nil
-
-// }
-
-// func (j *JWTManager) ExtractUserID(tokenStr string) (string, error) {
-// 	customClaims, err := j.Verify(tokenStr)
-// 	if err != nil {
-// 		return "", err
-// 	}
-
-// 	return customClaims.UserID, nil
-// }
+func containsAudience(aud jwt.ClaimStrings, target string) bool {
+	for _, a := range aud {
+		if a == target {
+			return true
+		}
+	}
+	return false
+}

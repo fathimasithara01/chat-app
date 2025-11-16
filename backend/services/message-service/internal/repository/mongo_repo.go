@@ -5,7 +5,7 @@ import (
 	"errors"
 	"time"
 
-	"github.com/fathima-sithara/chat-service/internal/domain"
+	"github.com/fathima-sithara/message-service/internal/domain"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
@@ -33,7 +33,6 @@ func NewMongoRepository(coll *mongo.Collection) *MongoRepository {
 	return &MongoRepository{coll: coll}
 }
 
-// GetMessageByID returns a message by its _id
 func (r *MongoRepository) GetMessageByID(ctx context.Context, messageID string) (*domain.Message, error) {
 	var m domain.Message
 	if err := r.coll.FindOne(ctx, bson.M{"_id": messageID}).Decode(&m); err != nil {
@@ -81,8 +80,6 @@ func (r *MongoRepository) SetDelivered(ctx context.Context, messageID string, de
 }
 
 func (r *MongoRepository) MarkRead(ctx context.Context, messageID, userID string) (string, error) {
-	// Mark read and return chatID
-	// find message to get chatID
 	var m domain.Message
 	if err := r.coll.FindOne(ctx, bson.M{"_id": messageID}).Decode(&m); err != nil {
 		return "", err

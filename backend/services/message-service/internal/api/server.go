@@ -1,10 +1,10 @@
 package api
 
 import (
-	"github.com/fathima-sithara/chat-service/internal/auth"
-	"github.com/fathima-sithara/chat-service/internal/config"
-	"github.com/fathima-sithara/chat-service/internal/service"
-	"github.com/fathima-sithara/chat-service/internal/ws"
+	"github.com/fathima-sithara/message-service/internal/auth"
+	"github.com/fathima-sithara/message-service/internal/config"
+	"github.com/fathima-sithara/message-service/internal/service"
+	"github.com/fathima-sithara/message-service/internal/ws"
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/logger"
 	"github.com/gofiber/websocket/v2"
@@ -16,17 +16,15 @@ type Server struct {
 	ws  *ws.Server
 }
 
-// NewServer creates a Fiber app with REST + WebSocket routes
 func NewServer(cfg *config.Config, cmd *service.CommandService, qry *service.QueryService, wsrv *ws.Server) *fiber.App {
 	app := fiber.New()
 	app.Use(logger.New())
 
-	s := &Server{cmd: cmd, qry: qry, ws: wsrv} // store the WS server
+	s := &Server{cmd: cmd, qry: qry, ws: wsrv}
 
 	api := app.Group("/v1")
 
-	// REST API with JWT middleware
-	api.Use(JWTMiddleware(wsrv.JWT())) // use getter to access JWTValidator
+	api.Use(JWTMiddleware(wsrv.JWT())) 
 	api.Post("/messages", s.sendMessage)
 	api.Get("/chats/:chat_id/messages", s.listMessages)
 	api.Post("/messages/:msg_id/read", s.markRead)
@@ -38,7 +36,6 @@ func NewServer(cfg *config.Config, cmd *service.CommandService, qry *service.Que
 	api.Get("/ws", websocket.New(func(wsConn *websocket.Conn) {
 		defer wsConn.Close()
 
-		// token from query param
 		token := wsConn.Query("token")
 		if token == "" {
 			wsConn.WriteMessage(websocket.CloseMessage,
@@ -46,7 +43,6 @@ func NewServer(cfg *config.Config, cmd *service.CommandService, qry *service.Que
 			return
 		}
 
-		// remove Bearer if present
 		const prefix = "Bearer "
 		if len(token) > len(prefix) && token[:len(prefix)] == prefix {
 			token = token[len(prefix):]
@@ -82,7 +78,6 @@ func NewServer(cfg *config.Config, cmd *service.CommandService, qry *service.Que
 	return app
 }
 
-// JWTMiddleware protects REST endpoints
 func JWTMiddleware(jv *auth.JWTValidator) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		h := c.Get("Authorization")

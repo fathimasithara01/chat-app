@@ -46,7 +46,7 @@ func (j *JWTValidator) Validate(tokenStr string) (string, error) {
 			return sub, nil
 		}
 		if userID, ok := claims["user_id"].(string); ok {
-			return userID, nil // <- use this
+			return userID, nil
 		}
 	}
 	return "", errors.New("invalid token")

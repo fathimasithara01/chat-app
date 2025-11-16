@@ -31,7 +31,6 @@ type mongoUserRepo struct {
 
 func NewMongoUserRepo(db *mongo.Database, collection string) UserRepository {
 	col := db.Collection(collection)
-	// create index on email unique
 	_, _ = col.Indexes().CreateOne(context.Background(), mongo.IndexModel{
 		Keys:    bson.D{{Key: "email", Value: 1}},
 		Options: options.Index().SetUnique(true).SetSparse(true),
@@ -71,7 +70,6 @@ func (r *mongoUserRepo) GetByID(ctx context.Context, id string) (*models.User, e
 	return &u, nil
 }
 
-// for admin can read soft-deleted optionally
 func (r *mongoUserRepo) GetByIDAdmin(ctx context.Context, id string) (*models.User, error) {
 	objID, err := primitive.ObjectIDFromHex(id)
 	if err != nil {

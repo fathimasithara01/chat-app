@@ -23,7 +23,6 @@ func NewConsumer(brokers []string, topic string, groupID string) *Consumer {
 	return &Consumer{reader: r}
 }
 
-// start handler loop (blocking) - caller should run in goroutine
 func (c *Consumer) Start(handle func(key string, value []byte)) {
 	ctx := context.Background()
 	for {

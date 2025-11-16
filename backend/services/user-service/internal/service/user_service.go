@@ -19,7 +19,7 @@ var ErrInvalidCredentials = errors.New("invalid credentials")
 
 type UserService struct {
 	repo       repository.UserRepository
-	authSvcURL string // for change-password proxy
+	authSvcURL string 
 	log        *zap.Logger
 	httpClient *http.Client
 }

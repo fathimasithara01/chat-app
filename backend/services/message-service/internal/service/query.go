@@ -5,9 +5,9 @@ import (
 	"encoding/base64"
 	"time"
 
-	"github.com/fathima-sithara/chat-service/internal/config"
-	"github.com/fathima-sithara/chat-service/internal/domain"
-	repo "github.com/fathima-sithara/chat-service/internal/repository"
+	"github.com/fathima-sithara/message-service/internal/config"
+	"github.com/fathima-sithara/message-service/internal/domain"
+	repo "github.com/fathima-sithara/message-service/internal/repository"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -26,7 +26,6 @@ func (s *QueryService) GetMessages(ctx context.Context, chatID string, limit int
 	if err != nil {
 		return nil, err
 	}
-	// decode base64 content before returning
 	for _, m := range msgs {
 		if m.Content != "" {
 			if b, err := base64.StdEncoding.DecodeString(m.Content); err == nil {

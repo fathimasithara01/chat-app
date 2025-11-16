@@ -85,7 +85,7 @@ func (h *Handler) VerifyEmail(c *fiber.Ctx) error {
 		if errors.Is(err, services.ErrInvalidOTP) {
 			return c.Status(fiber.StatusUnauthorized).JSON(errorResp{Error: err.Error()})
 		}
-		if errors.Is(err, services.ErrUserNotFound) { // User might not have initiated registration
+		if errors.Is(err, services.ErrUserNotFound) { 
 			return c.Status(fiber.StatusNotFound).JSON(errorResp{Error: err.Error()})
 		}
 		return c.Status(fiber.StatusInternalServerError).JSON(errorResp{Error: "failed to verify email"})

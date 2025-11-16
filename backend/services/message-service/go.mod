@@ -1,4 +1,4 @@
-module github.com/fathima-sithara/chat-service
+module github.com/fathima-sithara/message-service
 
 go 1.25.1
 

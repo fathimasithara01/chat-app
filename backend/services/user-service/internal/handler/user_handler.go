@@ -29,7 +29,6 @@ type changePasswordReq struct {
 	NewPassword string `json:"new_password"`
 }
 
-// GetProfile returns current user's profile (userID from middleware)
 func (h *Handler) GetProfile(c *fiber.Ctx) error {
 	userID := c.Locals("user_id")
 	if userID == nil {
@@ -47,7 +46,6 @@ func (h *Handler) GetProfile(c *fiber.Ctx) error {
 	return c.JSON(u)
 }
 
-// UpdateProfile updates username/email/phone
 func (h *Handler) UpdateProfile(c *fiber.Ctx) error {
 	userID := c.Locals("user_id")
 	if userID == nil {
@@ -81,7 +79,6 @@ func (h *Handler) ChangePassword(c *fiber.Ctx) error {
 	return c.JSON(fiber.Map{"message": "password changed"})
 }
 
-// Admin: Get user by id
 func (h *Handler) GetUserByID(c *fiber.Ctx) error {
 	id := c.Params("id")
 	u, err := h.svc.GetByIDAdmin(c.Context(), id)
@@ -95,7 +92,6 @@ func (h *Handler) GetUserByID(c *fiber.Ctx) error {
 	return c.JSON(u)
 }
 
-// Admin: soft delete
 func (h *Handler) DeleteUser(c *fiber.Ctx) error {
 	id := c.Params("id")
 	if err := h.svc.DeleteUser(c.Context(), id); err != nil {

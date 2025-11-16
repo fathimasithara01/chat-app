@@ -15,7 +15,6 @@ type Connection struct {
 	UserID string
 }
 
-// ReadPump reads messages from WebSocket
 func (c *Connection) ReadPump() {
 	defer func() {
 		c.Hub.Unregister(c.ChatID, c)
@@ -48,7 +47,6 @@ func (c *Connection) ReadPump() {
 	}
 }
 
-// WritePump writes messages to WebSocket
 func (c *Connection) WritePump() {
 	ticker := time.NewTicker(50 * time.Second)
 	defer func() {

@@ -1,14 +1,11 @@
 package api
 
 import (
-	"github.com/fathima-sithara/chat-service/internal/service"
+	"github.com/fathima-sithara/message-service/internal/service"
 	"github.com/gofiber/fiber/v2"
 )
 
-//	type sendMessageReq struct {
-//		ChatID  string `json:"chat_id" validate:"required"`
-//		Content string `json:"content" validate:"required"`
-//	}
+
 type sendMessageReq struct {
 	ChatID   string `json:"chat_id" validate:"required"`
 	Content  string `json:"content"`
@@ -29,7 +26,6 @@ func (s *Server) sendMessage(c *fiber.Ctx) error {
 			return fiber.NewError(fiber.StatusBadRequest, "content required for text messages")
 		}
 	} else {
-		// For media messages
 		if req.MediaURL == "" {
 			return fiber.NewError(fiber.StatusBadRequest, "media_url required for media messages")
 		}
@@ -55,7 +51,6 @@ func (s *Server) sendMessage(c *fiber.Ctx) error {
 		"message": msg,
 	})
 
-	// return c.JSON(msg)
 	return c.JSON(fiber.Map{
 		"message": msg,
 		"status":  "sent",

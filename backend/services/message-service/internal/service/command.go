@@ -10,10 +10,10 @@ import (
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
 
-	"github.com/fathima-sithara/chat-service/internal/config"
-	"github.com/fathima-sithara/chat-service/internal/domain"
-	"github.com/fathima-sithara/chat-service/internal/kafka"
-	repo "github.com/fathima-sithara/chat-service/internal/repository"
+	"github.com/fathima-sithara/message-service/internal/config"
+	"github.com/fathima-sithara/message-service/internal/domain"
+	"github.com/fathima-sithara/message-service/internal/kafka"
+	repo "github.com/fathima-sithara/message-service/internal/repository"
 )
 
 type CommandService struct {
@@ -27,15 +27,6 @@ func NewCommandService(r *repo.MongoRepository, rdb *redis.Client, prod *kafka.P
 	return &CommandService{repo: r, cache: rdb, prod: prod, cfg: cfg}
 }
 
-//	type SendMessageDTO struct {
-//		ChatID   string
-//		SenderID string
-//		Content  string
-//		MsgType  string
-//		MsgID    string
-//		Metadata map[string]string
-//		ReplyTo  string
-//	}
 type SendMessageDTO struct {
 	ChatID    string
 	SenderID  string
@@ -77,13 +68,11 @@ func (s *CommandService) CreateMessage(ctx context.Context, dto *SendMessageDTO)
 		return nil, err
 	}
 
-	// cache top-N (recent) for quick fetch
 	cacheKey := "chat:" + dto.ChatID + ":recent"
 	_ = s.cache.LPush(ctx, cacheKey, enc).Err()
 	_ = s.cache.LTrim(ctx, cacheKey, 0, 99).Err()
 	_ = s.cache.Expire(ctx, cacheKey, 24*time.Hour).Err()
 
-	// publish event to TopicOut
 	_ = s.prod.PublishMessage(ctx, id, map[string]interface{}{
 		"event":   "message.new",
 		"message": m,
@@ -111,7 +100,6 @@ func (s *CommandService) AddReaction(ctx context.Context, msgID, emoji, userID s
 }
 
 func (s *CommandService) GetMediaUploadURL(ctx context.Context, fileType string, fileSize int64) (string, error) {
-	// stub
 	return "https://example-storage.local/upload/" + time.Now().Format("20060102150405"), nil
 }
 
@@ -127,7 +115,6 @@ type SendMessageCommand struct {
 
 func (s *CommandService) SendMessage(ctx context.Context, cmd SendMessageCommand) (*domain.Message, error) {
 
-	// Validation
 	if cmd.ChatID == "" || cmd.UserID == "" {
 		return nil, errors.New("chat_id and user_id required")
 	}
@@ -142,10 +129,10 @@ func (s *CommandService) SendMessage(ctx context.Context, cmd SendMessageCommand
 		ChatID:    cmd.ChatID,
 		SenderID:  cmd.UserID,
 		Content:   cmd.Content,
-		MsgType:   cmd.MsgType, // <-- FIXED
+		MsgType:   cmd.MsgType,
 		ReplyTo:   cmd.ReplyTo,
-		MediaURL:  cmd.MediaURL,  // <-- include if you use media
-		Thumbnail: cmd.Thumbnail, // <-- include if needed
+		MediaURL:  cmd.MediaURL,
+		Thumbnail: cmd.Thumbnail,
 	})
 }
 
@@ -155,13 +142,11 @@ func (s *CommandService) MarkAsRead(ctx context.Context, msgID, userID string) e
 }
 
 func (s *CommandService) EditMessage(ctx context.Context, msgID, userID, newContent string) (*domain.Message, error) {
-	// 1) fetch existing message
 	m, err := s.repo.GetMessageByID(ctx, msgID)
 	if err != nil {
 		return nil, err
 	}
 
-	// 2) ownership check
 	if m.SenderID != userID {
 		return nil, fmt.Errorf("unauthorized: only sender can edit message")
 	}
@@ -180,7 +165,7 @@ func (s *CommandService) EditMessage(ctx context.Context, msgID, userID, newCont
 			ID:         msgID,
 			ChatID:     m.ChatID,
 			SenderID:   m.SenderID,
-			Content:    newContent, // decoded already
+			Content:    newContent, 
 			MsgType:    m.MsgType,
 			Encrypted:  m.Encrypted,
 			Metadata:   m.Metadata,
@@ -200,7 +185,6 @@ func (s *CommandService) EditMessage(ctx context.Context, msgID, userID, newCont
 		}
 	}
 
-	// 6) publish event (message.edited) with the updated message
 	_ = s.prod.PublishMessage(ctx, updated.ID, map[string]interface{}{
 		"event":   "message.edited",
 		"message": updated,

@@ -33,7 +33,6 @@ type Config struct {
 		RefreshTTLDays   int `yaml:"refresh_ttl_days"`
 	} `yaml:"jwt"`
 
-	// Values from .env
 	MongoURI  string
 	RedisAddr string
 	RedisPass string
@@ -41,11 +40,10 @@ type Config struct {
 }
 
 func Load() (*Config, error) {
-	_ = godotenv.Load() // Silent .env load
+	_ = godotenv.Load()
 
 	cfg := &Config{}
 
-	// Load config.yaml
 	data, err := os.ReadFile("config/config.yaml")
 	if err != nil {
 		return nil, err
@@ -54,14 +52,13 @@ func Load() (*Config, error) {
 		return nil, err
 	}
 
-	// Inject env secrets
 	cfg.MongoURI = os.Getenv("MONGO_URI")
 	cfg.RedisAddr = os.Getenv("REDIS_ADDR")
 	cfg.RedisPass = os.Getenv("REDIS_PASSWORD")
 	cfg.JWTSecret = os.Getenv("JWT_SECRET")
 
 	if cfg.MongoURI == "" || cfg.JWTSecret == "" {
-		log.Fatal("❌ Required environment variables missing in .env")
+		log.Fatal(" Required environment variables missing in .env")
 	}
 
 	return cfg, nil

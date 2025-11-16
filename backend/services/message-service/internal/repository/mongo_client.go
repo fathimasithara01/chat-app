@@ -4,13 +4,12 @@ import (
 	"context"
 	"time"
 
-	"github.com/fathima-sithara/chat-service/internal/config"
+	"github.com/fathima-sithara/message-service/internal/config"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
 func NewMongoClient() (*mongo.Client, error) {
-	// Load config from environment through config.Load()
 	cfg, err := LoadEnvDatabaseConfig()
 	if err != nil {
 		return nil, err
@@ -36,10 +35,6 @@ type DatabaseConfig struct {
 	Name string
 }
 
-/*
-This helper reads database config from the main config.
-It lets main.go stay clean and avoids passing config everywhere.
-*/
 func LoadEnvDatabaseConfig() (*DatabaseConfig, error) {
 	cfg, err := config.Load()
 	if err != nil {

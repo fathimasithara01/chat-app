@@ -13,7 +13,6 @@ func RegisterUserRoutes(app *fiber.App, h *handlers.Handler) {
 	api.Put("/me", middleware.JWT(), h.UpdateProfile)
 	api.Put("/change-password", middleware.JWT(), h.ChangePassword)
 
-	// Admin endpoints (should be protected by admin middleware - simple JWT used here)
 	api.Get("/:id", middleware.JWT(), h.GetUserByID)
 	api.Delete("/:id", middleware.JWT(), h.DeleteUser)
 }

@@ -4,8 +4,8 @@ import (
 	"encoding/json"
 	"log"
 
-	"github.com/fathima-sithara/chat-service/internal/auth"
-	"github.com/fathima-sithara/chat-service/internal/service"
+	"github.com/fathima-sithara/message-service/internal/auth"
+	"github.com/fathima-sithara/message-service/internal/service"
 	"github.com/gofiber/websocket/v2"
 )
 
@@ -49,7 +49,6 @@ func (s *Server) HandleEventMessage(key string, payload []byte) {
 	}
 }
 
-// Fiber WS handler
 func (s *Server) WSHandler() func(*websocket.Conn) {
 	return func(ws *websocket.Conn) {
 		defer ws.Close()
