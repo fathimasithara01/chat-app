@@ -10,8 +10,6 @@ type Message struct {
 	MsgType    string              `bson:"msg_type" json:"msg_type"`
 	Encrypted  bool                `bson:"encrypted" json:"encrypted"`
 	Metadata   map[string]string   `bson:"metadata,omitempty" json:"metadata,omitempty"`
-	MediaURL   string              `json:"media_url,omitempty"`
-	Thumbnail  string              `json:"thumbnail,omitempty"`
 	ReplyTo    string              `bson:"reply_to,omitempty" json:"reply_to,omitempty"`
 	CreatedAt  time.Time           `bson:"created_at" json:"created_at"`
 	EditedAt   *time.Time          `bson:"edited_at,omitempty" json:"edited_at,omitempty"`

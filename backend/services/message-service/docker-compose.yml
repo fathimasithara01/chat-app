@@ -1,61 +1,42 @@
-version: "3.8"
+version: '3.8'
+
 services:
-  mongo:
-    image: mongo:6
+  mongodb:
+    image: mongo:6.0
+    container_name: chat_mongo
     ports:
       - "27017:27017"
+    environment:
+      MONGO_INITDB_DATABASE: chatdb
     volumes:
       - mongo_data:/data/db
 
   redis:
     image: redis:7
+    container_name: chat_redis
     ports:
       - "6379:6379"
+    command: redis-server --requirepass fathimasithara
 
   zookeeper:
-    image: confluentinc/cp-zookeeper:7.4.0
-    environment:
-      ZOOKEEPER_CLIENT_PORT: 2181
+    image: wurstmeister/zookeeper
+    container_name: chat_zookeeper
     ports:
       - "2181:2181"
 
   kafka:
-    image: confluentinc/cp-kafka:7.4.0
-    depends_on:
-      - zookeeper
+    image: wurstmeister/kafka
+    container_name: chat_kafka
     ports:
       - "9092:9092"
     environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ADVERTISED_HOST_NAME: localhost
       KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
-
-  minio:
-    image: minio/minio
-    command: server /data --console-address ":9001"
-    environment:
-      MINIO_ROOT_USER: minioadmin
-      MINIO_ROOT_PASSWORD: minioadmin
-    ports:
-      - "9000:9000"
-      - "9001:9001"
-    volumes:
-      - minio_data:/data
-
-  message-service:
-    build: .
     depends_on:
-      - mongo
-      - redis
-      - kafka
-      - minio
-    environment:
-      AES256_KEY: "this_should_be_32_bytes_long_for_aes!!"
-    ports:
-      - "8085:8085"
+      - zookeeper
 
 volumes:
   mongo_data:
-  minio_data:
-
-encryption_key: "f93Ksl20Dk39sL20f9Dk39sL20Dk39sl"

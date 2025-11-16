@@ -8,68 +8,69 @@ import (
 )
 
 type Connection struct {
-	ws     *websocket.Conn
-	send   chan interface{}
-	chatID string
-	hub    *Hub
-	userID string
+	WS     *websocket.Conn
+	Send   chan interface{}
+	ChatID string
+	Hub    *Hub
+	UserID string
 }
 
-func (c *Connection) readPump() {
+// ReadPump reads messages from WebSocket
+func (c *Connection) ReadPump() {
 	defer func() {
-		c.hub.Unregister(c.chatID, c)
-		_ = c.ws.Close()
+		c.Hub.Unregister(c.ChatID, c)
+		_ = c.WS.Close()
 	}()
 
-	c.ws.SetReadDeadline(time.Now().Add(60 * time.Second))
-	c.ws.SetPongHandler(func(string) error {
-		_ = c.ws.SetReadDeadline(time.Now().Add(60 * time.Second))
+	c.WS.SetReadDeadline(time.Now().Add(60 * time.Second))
+	c.WS.SetPongHandler(func(string) error {
+		_ = c.WS.SetReadDeadline(time.Now().Add(60 * time.Second))
 		return nil
 	})
 
 	for {
 		var msg map[string]interface{}
-		if err := c.ws.ReadJSON(&msg); err != nil {
-			log.Println("ws read:", err)
+		if err := c.WS.ReadJSON(&msg); err != nil {
+			log.Println("ws read error:", err)
 			break
 		}
-		if event, ok := msg["event"].(string); ok {
-			switch event {
+
+		if ev, ok := msg["event"].(string); ok {
+			switch ev {
 			case "typing":
-				c.hub.Broadcast(c.chatID, map[string]interface{}{"event": "typing", "user": c.userID})
+				c.Hub.Broadcast(c.ChatID, map[string]interface{}{"event": "typing", "user": c.UserID})
 			case "read":
-				c.hub.Broadcast(c.chatID, map[string]interface{}{"event": "read", "user": c.userID, "msg_id": msg["msg_id"]})
+				c.Hub.Broadcast(c.ChatID, map[string]interface{}{"event": "read", "user": c.UserID, "msg_id": msg["msg_id"]})
 			case "reaction":
-				c.hub.Broadcast(c.chatID, map[string]interface{}{"event": "reaction", "user": c.userID, "msg_id": msg["msg_id"], "emoji": msg["emoji"]})
-			case "message":
-				c.hub.Broadcast(c.chatID, map[string]interface{}{"event": "message", "data": msg["data"], "user": c.userID})
+				c.Hub.Broadcast(c.ChatID, map[string]interface{}{"event": "reaction", "user": c.UserID, "msg_id": msg["msg_id"], "emoji": msg["emoji"]})
 			}
 		}
 	}
 }
 
-func (c *Connection) writePump() {
+// WritePump writes messages to WebSocket
+func (c *Connection) WritePump() {
 	ticker := time.NewTicker(50 * time.Second)
 	defer func() {
 		ticker.Stop()
-		_ = c.ws.Close()
+		_ = c.WS.Close()
 	}()
 
 	for {
 		select {
-		case msg, ok := <-c.send:
-			_ = c.ws.SetWriteDeadline(time.Now().Add(10 * time.Second))
+		case msg, ok := <-c.Send:
+			_ = c.WS.SetWriteDeadline(time.Now().Add(10 * time.Second))
 			if !ok {
-				_ = c.ws.WriteMessage(websocket.CloseMessage, []byte{})
+				_ = c.WS.WriteMessage(websocket.CloseMessage, []byte{})
 				return
 			}
-			if err := c.ws.WriteJSON(msg); err != nil {
-				log.Println("ws write:", err)
+			if err := c.WS.WriteJSON(msg); err != nil {
+				log.Println("ws write error:", err)
 				return
 			}
 		case <-ticker.C:
-			_ = c.ws.SetWriteDeadline(time.Now().Add(10 * time.Second))
-			if err := c.ws.WriteMessage(websocket.PingMessage, nil); err != nil {
+			_ = c.WS.SetWriteDeadline(time.Now().Add(10 * time.Second))
+			if err := c.WS.WriteMessage(websocket.PingMessage, nil); err != nil {
 				return
 			}
 		}

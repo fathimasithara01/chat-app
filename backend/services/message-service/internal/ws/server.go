@@ -1,48 +1,87 @@
 package ws
 
 import (
-	"github.com/fathima-sithara/message-service/internal/service"
+	"encoding/json"
+	"log"
+
+	"github.com/fathima-sithara/chat-service/internal/auth"
+	"github.com/fathima-sithara/chat-service/internal/service"
 	"github.com/gofiber/websocket/v2"
 )
 
 type Server struct {
-	Hub    *Hub
+	HubSvc *Hub
 	CmdSvc *service.CommandService
 	QrySvc *service.QueryService
+	jv     *auth.JWTValidator
 }
 
-func NewServer(cmd *service.CommandService, qry *service.QueryService) *Server {
+func NewServer(cmd *service.CommandService, qry *service.QueryService, jv *auth.JWTValidator) *Server {
 	return &Server{
-		Hub:    NewHub(),
+		HubSvc: NewHub(),
 		CmdSvc: cmd,
 		QrySvc: qry,
+		jv:     jv,
 	}
 }
 
-// HandleWS is the websocket.Handler used with websocket.New()
-func (s *Server) HandleWS(wsConn *websocket.Conn) {
-	// Locals set by JWT middleware preserved through upgrade by fiber/websocket
-	userVal := wsConn.Locals("user_id")
-	userID, _ := userVal.(string)
-	chatID := wsConn.Query("chat_id")
-	if userID == "" || chatID == "" {
-		_ = wsConn.Close()
+func (s *Server) Hub() *Hub {
+	return s.HubSvc
+}
+
+func (s *Server) JWT() *auth.JWTValidator {
+	return s.jv
+}
+
+// Forward messages from Kafka or other sources
+func (s *Server) HandleEventMessage(key string, payload []byte) {
+	var evt map[string]interface{}
+	if err := json.Unmarshal(payload, &evt); err != nil {
+		log.Println("invalid event:", err)
 		return
 	}
-
-	conn := &Connection{
-		ws:     wsConn,
-		send:   make(chan interface{}, 256),
-		chatID: chatID,
-		hub:    s.Hub,
-		userID: userID,
+	if msgI, ok := evt["message"]; ok {
+		if mm, ok := msgI.(map[string]interface{}); ok {
+			if chat, ok := mm["chat_id"].(string); ok && chat != "" {
+				s.HubSvc.Broadcast(chat, evt)
+			}
+		}
 	}
-
-	s.Hub.Register(chatID, conn)
-	go conn.writePump()
-	conn.readPump()
 }
 
-func (s *Server) BroadcastMessage(chatID string, msg interface{}) {
-	s.Hub.Broadcast(chatID, msg)
+// Fiber WS handler
+func (s *Server) WSHandler() func(*websocket.Conn) {
+	return func(ws *websocket.Conn) {
+		defer ws.Close()
+
+		token := ws.Query("token")
+		const prefix = "Bearer "
+		if len(token) > len(prefix) && token[:len(prefix)] == prefix {
+			token = token[len(prefix):]
+		}
+
+		userID, err := s.jv.Validate(token)
+		if err != nil {
+			log.Println("ws auth failed:", err)
+			return
+		}
+
+		chatID := ws.Query("chat_id")
+		if chatID == "" {
+			log.Println("chat_id required")
+			return
+		}
+
+		conn := &Connection{
+			WS:     ws,
+			Send:   make(chan interface{}, 256),
+			ChatID: chatID,
+			Hub:    s.HubSvc,
+			UserID: userID,
+		}
+
+		s.HubSvc.Register(chatID, conn)
+		go conn.WritePump()
+		conn.ReadPump()
+	}
 }
