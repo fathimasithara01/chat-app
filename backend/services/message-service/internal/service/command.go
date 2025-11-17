@@ -46,7 +46,7 @@ func (s *CommandService) CreateMessage(ctx context.Context, dto *SendMessageDTO)
 	}
 	now := time.Now().UTC()
 
-	enc := base64.StdEncoding.EncodeToString([]byte(dto.Content)) // store base64; encryption handled by message-service if needed
+	enc := base64.StdEncoding.EncodeToString([]byte(dto.Content)) 
 
 	m := &domain.Message{
 		ID:         id,

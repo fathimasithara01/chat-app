@@ -7,7 +7,7 @@ import (
 
 type Server struct {
 	hub *Hub
-	svc interface{} // not used heavily here but can hold chat service
+	svc interface{}
 	jv  *auth.JWTValidator
 }
 
@@ -15,10 +15,8 @@ func NewServer(svc interface{}, jv *auth.JWTValidator) *Server {
 	return &Server{hub: NewHub(), svc: svc, jv: jv}
 }
 
-// HandleWS is used with fiber websocket.New(...)
 func (s *Server) HandleWS() func(*websocket.Conn) {
 	return func(conn *websocket.Conn) {
-		// token query param or header
 		token := conn.Query("token")
 		if token == "" {
 			_ = conn.Close()

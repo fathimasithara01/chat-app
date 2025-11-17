@@ -26,12 +26,10 @@ func (c *Connection) readPump() {
 		if err != nil {
 			return
 		}
-		// Expect small JSON events like {"type":"typing","state":true}
 		var ev map[string]interface{}
 		if err := json.Unmarshal(data, &ev); err != nil {
 			continue
 		}
-		// Broadcast to others in same chat
 		c.hub.Broadcast(c.chat, map[string]interface{}{
 			"from":  c.uid,
 			"event": ev,
@@ -49,7 +47,6 @@ func (c *Connection) writePump() {
 		select {
 		case msg, ok := <-c.send:
 			if !ok {
-				// channel closed
 				_ = c.ws.WriteMessage(websocket.CloseMessage, []byte{})
 				return
 			}
@@ -58,7 +55,6 @@ func (c *Connection) writePump() {
 				return
 			}
 		case <-ticker.C:
-			// ping
 			if err := c.ws.WriteMessage(websocket.PingMessage, []byte{}); err != nil {
 				return
 			}

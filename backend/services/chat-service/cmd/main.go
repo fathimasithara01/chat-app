@@ -19,13 +19,11 @@ import (
 )
 
 func main() {
-	// load config (from config.yaml or environment)
 	cfg, err := config.Load()
 	if err != nil {
 		log.Fatal("load config:", err)
 	}
 
-	// connect mongo
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	clientOpts := options.Client().ApplyURI(cfg.Mongo.URI)
@@ -64,7 +62,6 @@ func main() {
 		log.Printf("signal %v received, shutting down", s)
 	}
 
-	// graceful stop
 	ctxShutdown, cancelShutdown := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancelShutdown()
 	if err := app.Shutdown(); err != nil {

@@ -16,7 +16,6 @@ func NewChatService(r *repository.Repository) *ChatService {
 	return &ChatService{repo: r}
 }
 
-// Create DM
 func (s *ChatService) CreateDM(ctx context.Context, userA, userB, name string) (*repository.Chat, error) {
 	if userA == "" || userB == "" || userA == userB {
 		return nil, errors.New("invalid participants")
@@ -38,7 +37,6 @@ func (s *ChatService) CreateDM(ctx context.Context, userA, userB, name string) (
 	return chat, nil
 }
 
-// Create Group
 func (s *ChatService) CreateGroup(ctx context.Context, owner, name string, members []string) (*repository.Chat, error) {
 	if owner == "" || name == "" {
 		return nil, errors.New("invalid request")

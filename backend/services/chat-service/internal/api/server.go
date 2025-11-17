@@ -12,7 +12,6 @@ import (
 	"github.com/gofiber/websocket/v2"
 )
 
-// Server wraps handlers
 type Server struct {
 	svc  *service.ChatService
 	wsrv *ws.Server
@@ -32,7 +31,6 @@ func NewServer(cfg *config.Config, svc *service.ChatService, wsrv *ws.Server, jv
 		if h == "" {
 			return c.Status(401).JSON(fiber.Map{"error": "missing auth"})
 		}
-		// Expect "Bearer <token>"
 		const pref = "Bearer "
 		if len(h) <= len(pref) || h[:len(pref)] != pref {
 			return c.Status(401).JSON(fiber.Map{"error": "invalid auth"})
@@ -54,7 +52,6 @@ func NewServer(cfg *config.Config, svc *service.ChatService, wsrv *ws.Server, jv
 	api.Delete("/groups/:chat_id/members/:user_id", s.removeMember)
 	api.Patch("/chats/:chat_id", s.updateChat)
 
-	// WS endpoint
 	api.Get("/ws", websocket.New(wsrv.HandleWS()))
 
 	return app
