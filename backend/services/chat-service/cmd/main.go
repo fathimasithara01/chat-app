@@ -5,83 +5,70 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"syscall"
 	"time"
 
 	"github.com/fathima-sithara/message-service/internal/api"
+	"github.com/fathima-sithara/message-service/internal/auth"
 	"github.com/fathima-sithara/message-service/internal/config"
-	"github.com/fathima-sithara/message-service/internal/crypto"
-	"github.com/fathima-sithara/message-service/internal/kafka"
-	repo "github.com/fathima-sithara/message-service/internal/repository"
+	"github.com/fathima-sithara/message-service/internal/repository"
 	"github.com/fathima-sithara/message-service/internal/service"
 	"github.com/fathima-sithara/message-service/internal/ws"
-	"github.com/redis/go-redis/v9"
+	"go.mongodb.org/mongo-driver/mongo"
+	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
 func main() {
+	// load config (from config.yaml or environment)
 	cfg, err := config.Load()
 	if err != nil {
-		log.Fatalf("load config: %v", err)
+		log.Fatal("load config:", err)
 	}
 
-	// Mongo
-	mc, err := repo.NewMongoClient(cfg)
+	// connect mongo
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	clientOpts := options.Client().ApplyURI(cfg.Mongo.URI)
+	client, err := mongo.Connect(ctx, clientOpts)
 	if err != nil {
-		log.Fatalf("mongo init: %v", err)
+		log.Fatal("mongo connect:", err)
 	}
-	defer func() { _ = mc.Disconnect(context.Background()) }()
+	if err = client.Ping(ctx, nil); err != nil {
+		log.Fatal("mongo ping:", err)
+	}
+	coll := client.Database(cfg.Mongo.Database).Collection("chats")
 
-	coll := mc.Database(cfg.Mongo.Database).Collection("messages")
-	mrepo := repo.NewMongoRepository(coll)
-
-	// Redis
-	rdb := redis.NewClient(&redis.Options{
-		Addr:     cfg.Redis.Addr,
-		Password: cfg.Redis.Password,
-		DB:       cfg.Redis.DB,
-	})
-	defer rdb.Close()
-
-	// AES key
-	aesKey := []byte(cfg.Security.AES256Key)
-
-	// Kafka producer
-	kprod := kafka.NewProducer(cfg.Kafka.Brokers, cfg.Kafka.TopicIn)
-	defer kprod.Close(context.Background())
-
-	// services
-	cmdSvc := service.NewCommandService(mrepo, rdb, kprod, aesKey, cfg)
-	qrySvc := service.NewQueryService(mrepo, rdb, aesKey, cfg)
-
-	// ws server
-	wsSrv := ws.NewServer(cmdSvc, qrySvc)
-
-	// jwt validator
-	jwtValidator, err := crypto.NewJWTValidator("keys/public.pem")
+	repo := repository.NewMongoRepository(coll)
+	jwtVal, err := auth.NewJWTValidator(cfg.JWT.PublicKeyPath)
 	if err != nil {
-		log.Fatalf("jwt validator: %v", err)
+		log.Fatal("jwt validator:", err)
 	}
 
-	// api server
-	app := api.NewServer(cfg, cmdSvc, qrySvc, wsSrv, jwtValidator)
+	svc := service.NewChatService(repo)
+	wsSrv := ws.NewServer(svc, jwtVal)
+	app := api.NewServer(cfg, svc, wsSrv, jwtVal)
 
-	// start server
+	srvErr := make(chan error, 1)
 	go func() {
-		addr := ":" + cfg.App.PortString()
-		if err := app.Listen(addr); err != nil {
-			log.Fatalf("server listen: %v", err)
-		}
+		srvErr <- app.Listen(":" + cfg.App.PortString())
 	}()
 
-	log.Printf("message-service started on :%s", cfg.App.PortString())
+	log.Printf("Chat-Service started on %s", cfg.App.PortString())
 
-	// graceful
-	quit := make(chan os.Signal, 1)
-	signal.Notify(quit, os.Interrupt)
-	<-quit
+	sig := make(chan os.Signal, 1)
+	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
+	select {
+	case err := <-srvErr:
+		log.Fatal("server error:", err)
+	case s := <-sig:
+		log.Printf("signal %v received, shutting down", s)
+	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
-	_ = app.ShutdownWithContext(ctx)
-	_ = kprod.Close(context.Background())
-	log.Println("stopped")
+	// graceful stop
+	ctxShutdown, cancelShutdown := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancelShutdown()
+	if err := app.Shutdown(); err != nil {
+		log.Printf("fiber shutdown err: %v", err)
+	}
+	_ = client.Disconnect(ctxShutdown)
 }

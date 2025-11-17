@@ -1,11 +1,9 @@
 package api
 
 import (
-	"strconv"
-	"time"
-
+	"github.com/fathima-sithara/message-service/internal/auth"
 	"github.com/fathima-sithara/message-service/internal/config"
-	"github.com/fathima-sithara/message-service/internal/crypto"
+
 	"github.com/fathima-sithara/message-service/internal/service"
 	"github.com/fathima-sithara/message-service/internal/ws"
 	"github.com/gofiber/fiber/v2"
@@ -13,166 +11,138 @@ import (
 	"github.com/gofiber/websocket/v2"
 )
 
+// Server wraps handlers
 type Server struct {
-	cmd *service.CommandService
-	qry *service.QueryService
-	ws  *ws.Server
-	app *fiber.App
+	svc  *service.ChatService
+	wsrv *ws.Server
+	app  *fiber.App
 }
 
-func NewServer(cfg *config.Config, cmd *service.CommandService, qry *service.QueryService, wsrv *ws.Server, jwtValidator *crypto.JWTValidator) *fiber.App {
-	s := &Server{cmd: cmd, qry: qry, ws: wsrv, app: fiber.New()}
-	s.app.Use(logger.New())
+func NewServer(cfg *config.Config, svc *service.ChatService, wsrv *ws.Server, jv *auth.JWTValidator) *fiber.App {
+	app := fiber.New()
+	app.Use(logger.New())
 
-	api := s.app.Group("/v1")
-	api.Use(JWTAuthMiddleware(jwtValidator))
+	s := &Server{svc: svc, wsrv: wsrv, app: app}
 
-	api.Post("/messages", s.sendMessage)
-	api.Get("/chats/:chat_id/messages", s.listMessages)
-	api.Post("/messages/:msg_id/read", s.markRead)
-	api.Patch("/messages/:msg_id", s.editMessage)
-	api.Delete("/messages/:msg_id", s.deleteMessage)
-	api.Get("/ws", websocket.New(s.ws.HandleWS))
-	api.Post("/media/upload-url", s.mediaUploadURL)
-	api.Get("/chats/:chat_id/last-message", s.lastMessage)
+	api := app.Group("/v1")
 
-	return s.app
-}
-
-type sendReq struct {
-	ChatID   string            `json:"chat_id"`
-	Content  string            `json:"content"`
-	MsgType  string            `json:"msg_type"`
-	MsgID    string            `json:"msg_id,omitempty"`
-	Metadata map[string]string `json:"metadata,omitempty"`
-}
-
-func (s *Server) sendMessage(c *fiber.Ctx) error {
-	userID := c.Locals("user_id").(string)
-	var req sendReq
-	if err := c.BodyParser(&req); err != nil {
-		return c.Status(400).JSON(fiber.Map{"error": "invalid body"})
-	}
-	dto := &service.SendMessageDTO{
-		ChatID:   req.ChatID,
-		SenderID: userID,
-		Content:  req.Content,
-		MsgType:  req.MsgType,
-		MsgID:    req.MsgID,
-		Metadata: req.Metadata,
-	}
-	m, err := s.cmd.CreateMessage(c.Context(), dto)
-	if err != nil {
-		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
-	}
-	s.ws.BroadcastMessage(req.ChatID, map[string]interface{}{
-		"event": "message.new",
-		"data":  m,
-	})
-	return c.Status(201).JSON(m)
-}
-
-func (s *Server) listMessages(c *fiber.Ctx) error {
-	chatID := c.Params("chat_id")
-	limitQ := c.Query("limit", "50")
-	beforeQ := c.Query("before", "")
-	limit, _ := strconv.ParseInt(limitQ, 10, 64)
-	var before time.Time
-	if beforeQ != "" {
-		if t, err := time.Parse(time.RFC3339, beforeQ); err == nil {
-			before = t
+	api.Use(func(c *fiber.Ctx) error {
+		h := c.Get("Authorization")
+		if h == "" {
+			return c.Status(401).JSON(fiber.Map{"error": "missing auth"})
 		}
-	}
-	msgs, err := s.qry.GetMessages(c.Context(), chatID, limit, before)
-	if err != nil {
-		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
-	}
-	return c.JSON(msgs)
+		// Expect "Bearer <token>"
+		const pref = "Bearer "
+		if len(h) <= len(pref) || h[:len(pref)] != pref {
+			return c.Status(401).JSON(fiber.Map{"error": "invalid auth"})
+		}
+		token := h[len(pref):]
+		sub, err := jv.Validate(token)
+		if err != nil {
+			return c.Status(401).JSON(fiber.Map{"error": err.Error()})
+		}
+		c.Locals("user_id", sub)
+		return c.Next()
+	})
+
+	api.Post("/chats", s.createChat)
+	api.Post("/groups", s.createGroup)
+	api.Get("/chats", s.listChats)
+	api.Get("/chats/:chat_id", s.getChat)
+	api.Post("/groups/:chat_id/members", s.addMember)
+	api.Delete("/groups/:chat_id/members/:user_id", s.removeMember)
+	api.Patch("/chats/:chat_id", s.updateChat)
+
+	// WS endpoint
+	api.Get("/ws", websocket.New(wsrv.HandleWS()))
+
+	return app
 }
 
-func (s *Server) markRead(c *fiber.Ctx) error {
-	msgID := c.Params("msg_id")
-	userID := c.Locals("user_id").(string)
-	chatID, err := s.cmd.MarkRead(c.Context(), msgID, userID)
+// handler implementations (add to same file or separate)
+func (s *Server) createChat(c *fiber.Ctx) error {
+	var body struct {
+		ParticipantID string `json:"participant_id"`
+		Name          string `json:"name"`
+	}
+	if err := c.BodyParser(&body); err != nil {
+		return c.Status(400).JSON(fiber.Map{"error": "invalid"})
+	}
+	user := c.Locals("user_id").(string)
+	chat, err := s.svc.CreateDM(c.Context(), user, body.ParticipantID,body.Name)
 	if err != nil {
 		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
 	}
-	s.ws.BroadcastMessage(chatID, map[string]interface{}{
-		"event":  "message.read",
-		"msg_id": msgID,
-		"user":   userID,
-	})
+	return c.Status(201).JSON(chat)
+}
+
+func (s *Server) createGroup(c *fiber.Ctx) error {
+	var body struct {
+		Name    string   `json:"name"`
+		Members []string `json:"members"`
+	}
+	if err := c.BodyParser(&body); err != nil {
+		return c.Status(400).JSON(fiber.Map{"error": "invalid"})
+	}
+	user := c.Locals("user_id").(string)
+	chat, err := s.svc.CreateGroup(c.Context(), user, body.Name, body.Members)
+	if err != nil {
+		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+	}
+	return c.Status(201).JSON(chat)
+}
+
+func (s *Server) listChats(c *fiber.Ctx) error {
+	user := c.Locals("user_id").(string)
+	chats, err := s.svc.ListUserChats(c.Context(), user, 50)
+	if err != nil {
+		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+	}
+	return c.JSON(chats)
+}
+
+func (s *Server) getChat(c *fiber.Ctx) error {
+	id := c.Params("chat_id")
+	ch, err := s.svc.GetChat(c.Context(), id)
+	if err != nil {
+		return c.Status(404).JSON(fiber.Map{"error": "not found"})
+	}
+	return c.JSON(ch)
+}
+
+func (s *Server) addMember(c *fiber.Ctx) error {
+	id := c.Params("chat_id")
+	var body struct {
+		UserID string `json:"user_id"`
+	}
+	if err := c.BodyParser(&body); err != nil {
+		return c.Status(400).JSON(fiber.Map{"error": "invalid"})
+	}
+	if err := s.svc.AddMember(c.Context(), id, body.UserID); err != nil {
+		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+	}
 	return c.JSON(fiber.Map{"status": "ok"})
 }
 
-func (s *Server) editMessage(c *fiber.Ctx) error {
-	msgID := c.Params("msg_id")
+func (s *Server) removeMember(c *fiber.Ctx) error {
+	id := c.Params("chat_id")
+	userID := c.Params("user_id")
+	if err := s.svc.RemoveMember(c.Context(), id, userID); err != nil {
+		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+	}
+	return c.JSON(fiber.Map{"status": "ok"})
+}
+
+func (s *Server) updateChat(c *fiber.Ctx) error {
+	id := c.Params("chat_id")
 	var body struct {
-		NewContent string `json:"new_content"`
+		Name string `json:"name"`
 	}
 	if err := c.BodyParser(&body); err != nil {
-		return c.Status(400).JSON(fiber.Map{"error": "invalid body"})
+		return c.Status(400).JSON(fiber.Map{"error": "invalid"})
 	}
-	m, chatID, err := s.cmd.EditMessage(c.Context(), msgID, body.NewContent)
-	if err != nil {
+	if err := s.svc.UpdateName(c.Context(), id, body.Name); err != nil {
 		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
 	}
-	// get decrypted version for broadcast
-	if msgFull, err2 := s.qry.GetMessageByID(c.Context(), msgID); err2 == nil {
-		s.ws.BroadcastMessage(chatID, map[string]interface{}{"event": "message.edited", "msg": msgFull})
-	} else {
-		s.ws.BroadcastMessage(chatID, map[string]interface{}{"event": "message.edited", "msg": m})
-	}
-	return c.JSON(m)
-}
-
-func (s *Server) deleteMessage(c *fiber.Ctx) error {
-	msgID := c.Params("msg_id")
-	forParam := c.Query("for", "me")
-	userID := c.Locals("user_id").(string)
-	// get chat id first (so we can broadcast)
-	chatID, _ := s.qry.GetMessageByID(c.Context(), msgID)
-	chatIDStr := ""
-	if chatID != nil {
-		chatIDStr = chatID.ChatID
-	}
-	chatIDRes, err := s.cmd.DeleteMessage(c.Context(), msgID, userID, forParam)
-	if err != nil {
-		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
-	}
-	if chatIDStr == "" {
-		chatIDStr = chatIDRes
-	}
-	if chatIDStr != "" {
-		s.ws.BroadcastMessage(chatIDStr, map[string]interface{}{
-			"event":  "message.deleted",
-			"msg_id": msgID,
-			"for":    forParam,
-		})
-	}
-	return c.JSON(fiber.Map{"status": "deleted"})
-}
-
-func (s *Server) mediaUploadURL(c *fiber.Ctx) error {
-	var body struct {
-		FileType string `json:"file_type"`
-		FileSize int64  `json:"file_size"`
-	}
-	if err := c.BodyParser(&body); err != nil {
-		return c.Status(400).JSON(fiber.Map{"error": "invalid body"})
-	}
-	url, err := s.cmd.GetMediaUploadURL(c.Context(), body.FileType, body.FileSize)
-	if err != nil {
-		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
-	}
-	return c.JSON(fiber.Map{"upload_url": url})
-}
-
-func (s *Server) lastMessage(c *fiber.Ctx) error {
-	chatID := c.Params("chat_id")
-	m, err := s.qry.GetLastMessage(c.Context(), chatID)
-	if err != nil {
-		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
-	}
-	return c.JSON(m)
+	return c.JSON(fiber.Map{"status": "ok"})
 }

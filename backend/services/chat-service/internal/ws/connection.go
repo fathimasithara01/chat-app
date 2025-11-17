@@ -1,75 +1,65 @@
 package ws
 
 import (
-	"log"
+	"encoding/json"
 	"time"
 
 	"github.com/gofiber/websocket/v2"
 )
 
 type Connection struct {
-	ws     *websocket.Conn
-	send   chan interface{}
-	chatID string
-	hub    *Hub
-	userID string
+	ws   *websocket.Conn
+	send chan interface{}
+	chat string
+	uid  string
+	hub  *Hub
 }
 
 func (c *Connection) readPump() {
 	defer func() {
-		c.hub.Unregister(c.chatID, c)
+		c.hub.Unregister(c.chat, c)
 		_ = c.ws.Close()
 	}()
-
-	c.ws.SetReadDeadline(time.Now().Add(60 * time.Second))
-	c.ws.SetPongHandler(func(string) error {
-		_ = c.ws.SetReadDeadline(time.Now().Add(60 * time.Second))
-		return nil
-	})
-
+	c.ws.SetReadLimit(1024 * 16)
 	for {
-		var msg map[string]interface{}
-		if err := c.ws.ReadJSON(&msg); err != nil {
-			log.Println("ws read:", err)
-			break
+		_, data, err := c.ws.ReadMessage()
+		if err != nil {
+			return
 		}
-		if event, ok := msg["event"].(string); ok {
-			switch event {
-			case "typing":
-				c.hub.Broadcast(c.chatID, map[string]interface{}{"event": "typing", "user": c.userID})
-			case "read":
-				c.hub.Broadcast(c.chatID, map[string]interface{}{"event": "read", "user": c.userID, "msg_id": msg["msg_id"]})
-			case "reaction":
-				c.hub.Broadcast(c.chatID, map[string]interface{}{"event": "reaction", "user": c.userID, "msg_id": msg["msg_id"], "emoji": msg["emoji"]})
-			case "message":
-				c.hub.Broadcast(c.chatID, map[string]interface{}{"event": "message", "data": msg["data"], "user": c.userID})
-			}
+		// Expect small JSON events like {"type":"typing","state":true}
+		var ev map[string]interface{}
+		if err := json.Unmarshal(data, &ev); err != nil {
+			continue
 		}
+		// Broadcast to others in same chat
+		c.hub.Broadcast(c.chat, map[string]interface{}{
+			"from":  c.uid,
+			"event": ev,
+		})
 	}
 }
 
 func (c *Connection) writePump() {
-	ticker := time.NewTicker(50 * time.Second)
+	ticker := time.NewTicker(30 * time.Second)
 	defer func() {
 		ticker.Stop()
 		_ = c.ws.Close()
 	}()
-
 	for {
 		select {
 		case msg, ok := <-c.send:
-			_ = c.ws.SetWriteDeadline(time.Now().Add(10 * time.Second))
 			if !ok {
+				// channel closed
 				_ = c.ws.WriteMessage(websocket.CloseMessage, []byte{})
 				return
 			}
-			if err := c.ws.WriteJSON(msg); err != nil {
-				log.Println("ws write:", err)
+			b, _ := json.Marshal(msg)
+			if err := c.ws.WriteMessage(websocket.TextMessage, b); err != nil {
 				return
 			}
 		case <-ticker.C:
-			_ = c.ws.SetWriteDeadline(time.Now().Add(10 * time.Second))
-			if err := c.ws.WriteMessage(websocket.PingMessage, nil); err != nil {
+			// ping
+			if err := c.ws.WriteMessage(websocket.PingMessage, []byte{}); err != nil {
 				return
 			}
 		}
