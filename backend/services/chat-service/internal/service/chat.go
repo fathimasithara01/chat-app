@@ -16,17 +16,21 @@ func NewChatService(r *repository.Repository) *ChatService {
 	return &ChatService{repo: r}
 }
 
-// Create 1:1 chat (idempotent by participants set)
+// Create DM
 func (s *ChatService) CreateDM(ctx context.Context, userA, userB, name string) (*repository.Chat, error) {
 	if userA == "" || userB == "" || userA == userB {
 		return nil, errors.New("invalid participants")
 	}
+
 	id := uuid.NewString()
 	chat := &repository.Chat{
 		ID:      id,
 		Name:    name,
 		IsGroup: false,
-		Members: []string{userA, userB},
+		Members: []repository.Member{
+			{ID: userA, Username: "Me"},
+			{ID: userB, Username: "UserB"},
+		},
 	}
 	if err := s.repo.CreateChat(ctx, chat); err != nil {
 		return nil, err
@@ -34,27 +38,24 @@ func (s *ChatService) CreateDM(ctx context.Context, userA, userB, name string) (
 	return chat, nil
 }
 
-func (s *ChatService) CreateGroup(ctx context.Context, owner string, name string, members []string) (*repository.Chat, error) {
+// Create Group
+func (s *ChatService) CreateGroup(ctx context.Context, owner, name string, members []string) (*repository.Chat, error) {
 	if owner == "" || name == "" {
 		return nil, errors.New("invalid request")
 	}
-	// ensure owner is in members
-	found := false
+
+	memberObjs := []repository.Member{{ID: owner, Username: "Me"}}
 	for _, m := range members {
-		if m == owner {
-			found = true
-			break
+		if m != owner {
+			memberObjs = append(memberObjs, repository.Member{ID: m, Username: "User"})
 		}
 	}
-	if !found {
-		members = append(members, owner)
-	}
-	id := uuid.NewString()
+
 	chat := &repository.Chat{
-		ID:      id,
-		IsGroup: true,
-		Members: members,
+		ID:      uuid.NewString(),
 		Name:    name,
+		IsGroup: true,
+		Members: memberObjs,
 	}
 	if err := s.repo.CreateChat(ctx, chat); err != nil {
 		return nil, err
@@ -70,12 +71,12 @@ func (s *ChatService) ListUserChats(ctx context.Context, userID string, limit in
 	return s.repo.ListChatsForUser(ctx, userID, limit)
 }
 
-func (s *ChatService) AddMember(ctx context.Context, chatID, userID string) error {
-	return s.repo.AddMember(ctx, chatID, userID)
+func (s *ChatService) AddMember(ctx context.Context, chatID string, member repository.Member) error {
+	return s.repo.AddMember(ctx, chatID, member)
 }
 
-func (s *ChatService) RemoveMember(ctx context.Context, chatID, userID string) error {
-	return s.repo.RemoveMember(ctx, chatID, userID)
+func (s *ChatService) RemoveMember(ctx context.Context, chatID, memberID string) error {
+	return s.repo.RemoveMember(ctx, chatID, memberID)
 }
 
 func (s *ChatService) UpdateName(ctx context.Context, chatID, name string) error {

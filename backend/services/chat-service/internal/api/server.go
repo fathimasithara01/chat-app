@@ -3,6 +3,7 @@ package api
 import (
 	"github.com/fathima-sithara/message-service/internal/auth"
 	"github.com/fathima-sithara/message-service/internal/config"
+	"github.com/fathima-sithara/message-service/internal/repository"
 
 	"github.com/fathima-sithara/message-service/internal/service"
 	"github.com/fathima-sithara/message-service/internal/ws"
@@ -59,21 +60,20 @@ func NewServer(cfg *config.Config, svc *service.ChatService, wsrv *ws.Server, jv
 	return app
 }
 
-// handler implementations (add to same file or separate)
 func (s *Server) createChat(c *fiber.Ctx) error {
 	var body struct {
 		ParticipantID string `json:"participant_id"`
 		Name          string `json:"name"`
 	}
 	if err := c.BodyParser(&body); err != nil {
-		return c.Status(400).JSON(fiber.Map{"error": "invalid"})
+		return c.Status(400).JSON(fiber.Map{"status": "error", "message": "invalid request"})
 	}
 	user := c.Locals("user_id").(string)
-	chat, err := s.svc.CreateDM(c.Context(), user, body.ParticipantID,body.Name)
+	chat, err := s.svc.CreateDM(c.Context(), user, body.ParticipantID, body.Name)
 	if err != nil {
-		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+		return c.Status(500).JSON(fiber.Map{"status": "error", "message": err.Error()})
 	}
-	return c.Status(201).JSON(chat)
+	return c.Status(201).JSON(fiber.Map{"status": "success", "data": chat})
 }
 
 func (s *Server) createGroup(c *fiber.Ctx) error {
@@ -82,14 +82,14 @@ func (s *Server) createGroup(c *fiber.Ctx) error {
 		Members []string `json:"members"`
 	}
 	if err := c.BodyParser(&body); err != nil {
-		return c.Status(400).JSON(fiber.Map{"error": "invalid"})
+		return c.Status(400).JSON(fiber.Map{"status": "error", "message": "invalid request"})
 	}
 	user := c.Locals("user_id").(string)
 	chat, err := s.svc.CreateGroup(c.Context(), user, body.Name, body.Members)
 	if err != nil {
-		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+		return c.Status(500).JSON(fiber.Map{"status": "error", "message": err.Error()})
 	}
-	return c.Status(201).JSON(chat)
+	return c.Status(201).JSON(fiber.Map{"status": "success", "data": chat})
 }
 
 func (s *Server) listChats(c *fiber.Ctx) error {
@@ -111,17 +111,23 @@ func (s *Server) getChat(c *fiber.Ctx) error {
 }
 
 func (s *Server) addMember(c *fiber.Ctx) error {
-	id := c.Params("chat_id")
+	chatID := c.Params("chat_id")
 	var body struct {
 		UserID string `json:"user_id"`
 	}
 	if err := c.BodyParser(&body); err != nil {
 		return c.Status(400).JSON(fiber.Map{"error": "invalid"})
 	}
-	if err := s.svc.AddMember(c.Context(), id, body.UserID); err != nil {
+
+	member := repository.Member{
+		ID:       body.UserID,
+		Username: "User",
+	}
+
+	if err := s.svc.AddMember(c.Context(), chatID, member); err != nil {
 		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
 	}
-	return c.JSON(fiber.Map{"status": "ok"})
+	return c.JSON(fiber.Map{"status": "success", "message": "member added"})
 }
 
 func (s *Server) removeMember(c *fiber.Ctx) error {
@@ -130,7 +136,7 @@ func (s *Server) removeMember(c *fiber.Ctx) error {
 	if err := s.svc.RemoveMember(c.Context(), id, userID); err != nil {
 		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
 	}
-	return c.JSON(fiber.Map{"status": "ok"})
+	return c.JSON(fiber.Map{"status": "success", "message": "member removed"})
 }
 
 func (s *Server) updateChat(c *fiber.Ctx) error {
@@ -144,5 +150,5 @@ func (s *Server) updateChat(c *fiber.Ctx) error {
 	if err := s.svc.UpdateName(c.Context(), id, body.Name); err != nil {
 		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
 	}
-	return c.JSON(fiber.Map{"status": "ok"})
+	return c.JSON(fiber.Map{"status": "updated"})
 }

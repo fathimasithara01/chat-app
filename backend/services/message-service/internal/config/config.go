@@ -46,7 +46,7 @@ type Config struct {
 
 func Load() (*Config, error) {
 	cfg := &Config{
-		App: App{Port: 8083},
+		App: App{Port: 8084},
 		Database: Database{
 			URI:  "mongodb://127.0.0.1:27017",
 			Name: "chatdb",

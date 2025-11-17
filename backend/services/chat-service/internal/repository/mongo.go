@@ -12,13 +12,28 @@ import (
 
 var ErrNotFound = errors.New("not found")
 
+type Member struct {
+    ID       string `bson:"id" json:"id"`
+    Username string `bson:"username" json:"username"`
+    Avatar   string `bson:"avatar,omitempty" json:"avatar,omitempty"`
+}
+
+type Message struct {
+    ID        string    `bson:"_id" json:"id"`
+    Sender    Member    `bson:"sender" json:"sender"`
+    Content   string    `bson:"content" json:"content"`
+    MsgType   string    `bson:"msg_type" json:"msg_type"`
+    CreatedAt time.Time `bson:"created_at" json:"created_at"`
+}
+
 type Chat struct {
-    ID         string    `bson:"_id,omitempty" json:"id"`
-    Name       string    `bson:"name,omitempty" json:"name"`
-    IsGroup    bool      `bson:"is_group" json:"is_group"`
-    Members    []string  `bson:"members" json:"members"`
-    CreatedAt  time.Time `bson:"created_at" json:"created_at"`
-    UpdatedAt  time.Time `bson:"updated_at" json:"updated_at"`
+    ID          string    `bson:"_id,omitempty" json:"id"`
+    Name        string    `bson:"name,omitempty" json:"name"`
+    IsGroup     bool      `bson:"is_group" json:"is_group"`
+    Members     []Member  `bson:"members" json:"members"`
+    LastMessage *Message  `bson:"last_message,omitempty" json:"last_message,omitempty"`
+    CreatedAt   time.Time `bson:"created_at" json:"created_at"`
+    UpdatedAt   time.Time `bson:"updated_at" json:"updated_at"`
 }
 
 type Repository struct {
@@ -26,9 +41,8 @@ type Repository struct {
 }
 
 func NewMongoRepository(coll *mongo.Collection) *Repository {
-    // ensure index on members for listing
     idx := mongo.IndexModel{
-        Keys:    bson.D{{Key: "members", Value: 1}},
+        Keys:    bson.D{{Key: "members.id", Value: 1}},
         Options: options.Index().SetBackground(true).SetName("members_idx"),
     }
     _, _ = coll.Indexes().CreateOne(context.Background(), idx)
@@ -55,7 +69,7 @@ func (r *Repository) GetChat(ctx context.Context, id string) (*Chat, error) {
 }
 
 func (r *Repository) ListChatsForUser(ctx context.Context, userID string, limit int64) ([]*Chat, error) {
-    cur, err := r.coll.Find(ctx, bson.M{"members": userID}, &options.FindOptions{
+    cur, err := r.coll.Find(ctx, bson.M{"members.id": userID}, &options.FindOptions{
         Sort:  bson.D{{Key: "updated_at", Value: -1}},
         Limit: &limit,
     })
@@ -63,28 +77,40 @@ func (r *Repository) ListChatsForUser(ctx context.Context, userID string, limit 
         return nil, err
     }
     defer cur.Close(ctx)
-    var out []*Chat
+
+    var chats []*Chat
     for cur.Next(ctx) {
         var c Chat
         if err := cur.Decode(&c); err != nil {
             return nil, err
         }
-        out = append(out, &c)
+        chats = append(chats, &c)
     }
-    return out, nil
+    return chats, nil
 }
 
-func (r *Repository) AddMember(ctx context.Context, chatID, userID string) error {
-    _, err := r.coll.UpdateByID(ctx, chatID, bson.M{"$addToSet": bson.M{"members": userID}, "$set": bson.M{"updated_at": time.Now().UTC()}})
+func (r *Repository) AddMember(ctx context.Context, chatID string, member Member) error {
+    update := bson.M{
+        "$addToSet": bson.M{"members": member},
+        "$set":      bson.M{"updated_at": time.Now().UTC()},
+    }
+    _, err := r.coll.UpdateByID(ctx, chatID, update)
     return err
 }
 
-func (r *Repository) RemoveMember(ctx context.Context, chatID, userID string) error {
-    _, err := r.coll.UpdateByID(ctx, chatID, bson.M{"$pull": bson.M{"members": userID}, "$set": bson.M{"updated_at": time.Now().UTC()}})
+func (r *Repository) RemoveMember(ctx context.Context, chatID, memberID string) error {
+    update := bson.M{
+        "$pull": bson.M{"members": bson.M{"id": memberID}},
+        "$set":  bson.M{"updated_at": time.Now().UTC()},
+    }
+    _, err := r.coll.UpdateByID(ctx, chatID, update)
     return err
 }
 
 func (r *Repository) UpdateChatName(ctx context.Context, chatID, name string) error {
-    _, err := r.coll.UpdateByID(ctx, chatID, bson.M{"$set": bson.M{"name": name, "updated_at": time.Now().UTC()}})
+    update := bson.M{
+        "$set": bson.M{"name": name, "updated_at": time.Now().UTC()},
+    }
+    _, err := r.coll.UpdateByID(ctx, chatID, update)
     return err
 }
