@@ -33,7 +33,6 @@ func (s *Server) JWT() *auth.JWTValidator {
 	return s.jv
 }
 
-// Forward messages from Kafka or other sources
 func (s *Server) HandleEventMessage(key string, payload []byte) {
 	var evt map[string]interface{}
 	if err := json.Unmarshal(payload, &evt); err != nil {
