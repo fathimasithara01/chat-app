@@ -3,7 +3,6 @@ package api
 import (
 	"github.com/fathima-sithara/message-service/internal/auth"
 	"github.com/fathima-sithara/message-service/internal/config"
-	"github.com/fathima-sithara/message-service/internal/repository"
 
 	"github.com/fathima-sithara/message-service/internal/service"
 	"github.com/fathima-sithara/message-service/internal/ws"
@@ -89,14 +88,14 @@ func (s *Server) createGroup(c *fiber.Ctx) error {
 	return c.Status(201).JSON(fiber.Map{"status": "success", "data": chat})
 }
 
-func (s *Server) listChats(c *fiber.Ctx) error {
-	user := c.Locals("user_id").(string)
-	chats, err := s.svc.ListUserChats(c.Context(), user, 50)
-	if err != nil {
-		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+	func (s *Server) listChats(c *fiber.Ctx) error {
+		user := c.Locals("user_id").(string)
+		chats, err := s.svc.ListUserChats(c.Context(), user, 50)
+		if err != nil {
+			return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+		}
+		return c.JSON(chats)
 	}
-	return c.JSON(chats)
-}
 
 func (s *Server) getChat(c *fiber.Ctx) error {
 	id := c.Params("chat_id")
@@ -112,19 +111,25 @@ func (s *Server) addMember(c *fiber.Ctx) error {
 	var body struct {
 		UserID string `json:"user_id"`
 	}
-	if err := c.BodyParser(&body); err != nil {
-		return c.Status(400).JSON(fiber.Map{"error": "invalid"})
+	if err := c.BodyParser(&body); err != nil || body.UserID == "" {
+		return c.Status(400).JSON(fiber.Map{
+			"status":  "error",
+			"message": "invalid request body",
+		})
 	}
 
-	member := repository.Member{
-		ID:       body.UserID,
-		Username: "User",
+	// Pass only the UserID string
+	if err := s.svc.AddMember(c.Context(), chatID, body.UserID); err != nil {
+		return c.Status(500).JSON(fiber.Map{
+			"status":  "error",
+			"message": err.Error(),
+		})
 	}
 
-	if err := s.svc.AddMember(c.Context(), chatID, member); err != nil {
-		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
-	}
-	return c.JSON(fiber.Map{"status": "success", "message": "member added"})
+	return c.JSON(fiber.Map{
+		"status":  "success",
+		"message": "member added",
+	})
 }
 
 func (s *Server) removeMember(c *fiber.Ctx) error {

@@ -11,6 +11,7 @@ import (
 	"github.com/fathima-sithara/message-service/internal/api"
 	"github.com/fathima-sithara/message-service/internal/auth"
 	"github.com/fathima-sithara/message-service/internal/config"
+	"github.com/fathima-sithara/message-service/internal/events"
 	"github.com/fathima-sithara/message-service/internal/repository"
 	"github.com/fathima-sithara/message-service/internal/service"
 	"github.com/fathima-sithara/message-service/internal/ws"
@@ -42,7 +43,12 @@ func main() {
 		log.Fatal("jwt validator:", err)
 	}
 
-	svc := service.NewChatService(repo)
+	pub, err := events.NewPublisher("nats://localhost:4222")
+	if err != nil {
+		log.Fatal("Failed to connect to NATS:", err)
+	}
+
+	svc := service.NewChatService(repo, pub)
 	wsSrv := ws.NewServer(svc, jwtVal)
 	app := api.NewServer(cfg, svc, wsSrv, jwtVal)
 
