@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/fathima-sithara/message-service/internal/events"
+	"github.com/fathima-sithara/message-service/internal/models"
 	"github.com/fathima-sithara/message-service/internal/repository"
 	"github.com/google/uuid"
 )
@@ -28,11 +29,11 @@ func contains(arr []string, id string) bool {
 	return false
 }
 
-func (s *ChatService) CreateDM(ctx context.Context, a, b, name string) (*repository.Chat, error) {
+func (s *ChatService) CreateDM(ctx context.Context, a, b, name string) (*models.Chat, error) {
 	if a == "" || b == "" || a == b {
 		return nil, errors.New("invalid participants")
 	}
-	chat := &repository.Chat{
+	chat := &models.Chat{
 		ID:        uuid.NewString(),
 		Name:      name,
 		IsGroup:   false,
@@ -49,14 +50,14 @@ func (s *ChatService) CreateDM(ctx context.Context, a, b, name string) (*reposit
 	return chat, nil
 }
 
-func (s *ChatService) CreateGroup(ctx context.Context, owner, name string, members []string) (*repository.Chat, error) {
+func (s *ChatService) CreateGroup(ctx context.Context, owner, name string, members []string) (*models.Chat, error) {
 	if owner == "" || name == "" {
 		return nil, errors.New("invalid data")
 	}
 	if !contains(members, owner) {
 		members = append(members, owner)
 	}
-	chat := &repository.Chat{ID: uuid.NewString(), Name: name, IsGroup: true, Members: members, CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC()}
+	chat := &models.Chat{ID: uuid.NewString(), Name: name, IsGroup: true, Members: members, CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC()}
 	if err := s.repo.CreateChat(ctx, chat); err != nil {
 		return nil, err
 	}
@@ -66,11 +67,11 @@ func (s *ChatService) CreateGroup(ctx context.Context, owner, name string, membe
 	return chat, nil
 }
 
-func (s *ChatService) GetChat(ctx context.Context, id string) (*repository.Chat, error) {
+func (s *ChatService) GetChat(ctx context.Context, id string) (*models.Chat, error) {
 	return s.repo.GetChat(ctx, id)
 }
 
-func (s *ChatService) ListUserChats(ctx context.Context, userID string, limit int64) ([]*repository.Chat, error) {
+func (s *ChatService) ListUserChats(ctx context.Context, userID string, limit int64) ([]*models.Chat, error) {
 	return s.repo.ListChatsForUser(ctx, userID, limit)
 }
 

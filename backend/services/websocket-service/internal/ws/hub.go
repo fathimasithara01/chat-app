@@ -2,93 +2,55 @@ package ws
 
 import (
 	"sync"
-
-	"github.com/gofiber/websocket/v2"
+	"time"
 )
 
-// Hub manages connected clients and chat rooms
 type Hub struct {
-	clients   map[string]*Client           // userID -> Client
-	rooms     map[string]map[string]bool   // chatID -> map[userID]bool
-	mu        sync.RWMutex
+	rooms map[string]map[*Connection]bool
+	mu    sync.RWMutex
 }
 
 func NewHub() *Hub {
 	return &Hub{
-		clients: make(map[string]*Client),
-		rooms:   make(map[string]map[string]bool),
+		rooms: make(map[string]map[*Connection]bool),
 	}
 }
 
-func (h *Hub) AddClient(userID string, c *Client) {
+func (h *Hub) Register(room string, c *Connection) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	h.clients[userID] = c
-}
-
-func (h *Hub) RemoveClient(userID string) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	delete(h.clients, userID)
-	for _, members := range h.rooms {
-		delete(members, userID)
+	if h.rooms[room] == nil {
+		h.rooms[room] = make(map[*Connection]bool)
 	}
+	h.rooms[room][c] = true
 }
 
-func (h *Hub) JoinRoom(chatID, userID string) {
+func (h *Hub) Unregister(room string, c *Connection) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	if _, ok := h.rooms[chatID]; !ok {
-		h.rooms[chatID] = make(map[string]bool)
-	}
-	h.rooms[chatID][userID] = true
-}
-
-func (h *Hub) LeaveRoom(chatID, userID string) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	if members, ok := h.rooms[chatID]; ok {
-		delete(members, userID)
-	}
-}
-
-func (h *Hub) Broadcast(chatID string, message any) {
-	h.mu.RLock()
-	defer h.mu.RUnlock()
-	if members, ok := h.rooms[chatID]; ok {
-		for userID := range members {
-			if client, ok := h.clients[userID]; ok {
-				client.Send(message)
-			}
+	if conns, ok := h.rooms[room]; ok {
+		delete(conns, c)
+		if len(conns) == 0 {
+			delete(h.rooms, room)
 		}
 	}
 }
 
-// Client represents a connected websocket client
-type Client struct {
-	UserID string
-	Conn   *websocket.Conn
-	send   chan any
-}
-
-func NewClient(userID string, conn *websocket.Conn) *Client {
-	return &Client{
-		UserID: userID,
-		Conn:   conn,
-		send:   make(chan any),
+func (h *Hub) Broadcast(room string, msg interface{}) {
+	h.mu.RLock()
+	conns := h.rooms[room]
+	h.mu.RUnlock()
+	if conns == nil {
+		return
 	}
-}
-
-func (c *Client) Send(msg any) {
-	select {
-	case c.send <- msg:
-	default:
-		// drop if blocked
-	}
-}
-
-func (c *Client) WritePump() {
-	for msg := range c.send {
-		c.Conn.WriteJSON(msg)
+	for c := range conns {
+		// non-blocking send with timeout to avoid slow consumers
+		select {
+		case c.send <- msg:
+		case <-time.After(200 * time.Millisecond):
+			// slow consumer: remove
+			h.Unregister(room, c)
+			close(c.send)
+		}
 	}
 }

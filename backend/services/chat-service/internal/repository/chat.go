@@ -5,30 +5,13 @@ import (
 	"errors"
 	"time"
 
+	"github.com/fathima-sithara/message-service/internal/models"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
 var ErrNotFound = errors.New("not found")
-
-type Message struct {
-	ID        string    `bson:"_id,omitempty" json:"id"`
-	SenderID  string    `bson:"sender_id" json:"sender_id"`
-	Content   string    `bson:"content" json:"content"`
-	MsgType   string    `bson:"msg_type" json:"msg_type"`
-	CreatedAt time.Time `bson:"created_at" json:"created_at"`
-}
-
-type Chat struct {
-	ID          string    `bson:"_id,omitempty" json:"id"`
-	Name        string    `bson:"name,omitempty" json:"name"`
-	IsGroup     bool      `bson:"is_group" json:"is_group"`
-	Members     []string  `bson:"members" json:"members"` // user IDs only
-	LastMessage *Message  `bson:"last_message,omitempty" json:"last_message,omitempty"`
-	CreatedAt   time.Time `bson:"created_at" json:"created_at"`
-	UpdatedAt   time.Time `bson:"updated_at" json:"updated_at"`
-}
 
 type Repository struct{ coll *mongo.Collection }
 
@@ -42,7 +25,7 @@ func NewMongoRepository(coll *mongo.Collection) *Repository {
 	return &Repository{coll: coll}
 }
 
-func (r *Repository) CreateChat(ctx context.Context, chat *Chat) error {
+func (r *Repository) CreateChat(ctx context.Context, chat *models.Chat) error {
 	now := time.Now().UTC()
 	chat.CreatedAt = now
 	chat.UpdatedAt = now
@@ -50,8 +33,8 @@ func (r *Repository) CreateChat(ctx context.Context, chat *Chat) error {
 	return err
 }
 
-func (r *Repository) GetChat(ctx context.Context, id string) (*Chat, error) {
-	var c Chat
+func (r *Repository) GetChat(ctx context.Context, id string) (*models.Chat, error) {
+	var c models.Chat
 	if err := r.coll.FindOne(ctx, bson.M{"_id": id}).Decode(&c); err != nil {
 		if err == mongo.ErrNoDocuments {
 			return nil, ErrNotFound
@@ -61,7 +44,7 @@ func (r *Repository) GetChat(ctx context.Context, id string) (*Chat, error) {
 	return &c, nil
 }
 
-func (r *Repository) ListChatsForUser(ctx context.Context, userID string, limit int64) ([]*Chat, error) {
+func (r *Repository) ListChatsForUser(ctx context.Context, userID string, limit int64) ([]*models.Chat, error) {
 	filter := bson.M{"members": userID}
 	opts := options.Find().SetSort(bson.D{{Key: "updated_at", Value: -1}}).SetLimit(limit)
 	cur, err := r.coll.Find(ctx, filter, opts)
@@ -69,9 +52,9 @@ func (r *Repository) ListChatsForUser(ctx context.Context, userID string, limit 
 		return nil, err
 	}
 	defer cur.Close(ctx)
-	var out []*Chat
+	var out []*models.Chat
 	for cur.Next(ctx) {
-		var c Chat
+		var c models.Chat
 		if err := cur.Decode(&c); err != nil {
 			return nil, err
 		}
@@ -92,7 +75,7 @@ func (r *Repository) RemoveMember(ctx context.Context, chatID, userID string) er
 	return err
 }
 
-func (r *Repository) UpdateChat(ctx context.Context, chat *Chat) error {
+func (r *Repository) UpdateChat(ctx context.Context, chat *models.Chat) error {
 	if chat == nil || chat.ID == "" {
 		return errors.New("invalid chat")
 	}
