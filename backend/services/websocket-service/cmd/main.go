@@ -21,7 +21,6 @@ func main() {
 		log.Fatalf("config load: %v", err)
 	}
 
-	// JWT validator (supports RS256 or HS256 based on config)
 	var jv *auth.JWTValidator
 	if cfg.JWT.Algorithm == "RS256" {
 		jv, err = auth.NewJWTValidatorRS256(cfg.JWT.PublicKeyPath)
@@ -32,16 +31,10 @@ func main() {
 		log.Fatalf("jwt validator init: %v", err)
 	}
 
-	// store (in-memory for demo)
 	st := store.NewMemoryStore()
-
-	// ws server
 	wsSrv := ws.NewServer(jv)
-
-	// http server
 	app := api.NewServer(cfg, wsSrv, st, jv)
 
-	// run
 	errs := make(chan error, 1)
 	go func() {
 		addr := ":" + cfg.App.PortString()
@@ -49,7 +42,6 @@ func main() {
 		errs <- app.Listen(addr)
 	}()
 
-	// graceful shutdown
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
 	select {
@@ -59,9 +51,11 @@ func main() {
 		log.Printf("signal received: %v", s)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	_ = app.Shutdown()
+	if err := app.Shutdown(); err != nil {
+		log.Printf("fiber shutdown err: %v", err)
+	}
+	_ = shutdownCtx
 	log.Println("shutting down")
-	_ = ctx
 }

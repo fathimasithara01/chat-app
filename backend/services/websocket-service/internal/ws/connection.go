@@ -25,7 +25,6 @@ func NewConnection(conn *websocket.Conn, uid, room string, hub *Hub) *Connection
 	}
 }
 
-// readPump reads messages from client and broadcasts
 func (c *Connection) readPump() {
 	defer func() {
 		c.hub.Unregister(c.room, c)
@@ -43,14 +42,13 @@ func (c *Connection) readPump() {
 		if err != nil {
 			return
 		}
-		// accept JSON payload - client can send { "type": "chat", "content": "..." }
 		var payload map[string]interface{}
 		if err := json.Unmarshal(data, &payload); err != nil {
-			// ignore invalid JSON
+			// ignore bad json
 			continue
 		}
 
-		// enrich and broadcast
+		// compat: if client sends {type:"chat", content:"..."}, broadcast enriched msg
 		msg := map[string]interface{}{
 			"type":      payload["type"],
 			"from":      c.uid,
@@ -62,7 +60,6 @@ func (c *Connection) readPump() {
 	}
 }
 
-// writePump writes messages to client (safe: uses NextWriter)
 func (c *Connection) writePump() {
 	ticker := time.NewTicker(30 * time.Second)
 	defer func() {

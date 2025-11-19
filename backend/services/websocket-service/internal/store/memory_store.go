@@ -26,7 +26,6 @@ func NewMemoryStore() *MemoryStore {
 func (s *MemoryStore) SaveMessage(m *Message) error {
 	m.CreatedAt = time.Now().UTC()
 	s.store[m.ChatID] = append(s.store[m.ChatID], m)
-	// keep small: cap to 1000 per chat for memory
 	if len(s.store[m.ChatID]) > 1000 {
 		s.store[m.ChatID] = s.store[m.ChatID][len(s.store[m.ChatID])-1000:]
 	}

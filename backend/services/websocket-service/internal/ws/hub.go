@@ -44,11 +44,10 @@ func (h *Hub) Broadcast(room string, msg interface{}) {
 		return
 	}
 	for c := range conns {
-		// non-blocking send with timeout to avoid slow consumers
 		select {
 		case c.send <- msg:
 		case <-time.After(200 * time.Millisecond):
-			// slow consumer: remove
+			// slow consumer — unregister
 			h.Unregister(room, c)
 			close(c.send)
 		}

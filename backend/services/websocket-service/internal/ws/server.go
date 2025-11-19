@@ -5,11 +5,10 @@ import (
 	"github.com/gofiber/websocket/v2"
 )
 
-// Server wires hub and JWT validator
+// Server wires hub and jwt validator
 type Server struct {
 	hub *Hub
 	jv  *auth.JWTValidator
-	// optional: a service/store reference to persist messages
 }
 
 func NewServer(jv *auth.JWTValidator) *Server {
@@ -19,10 +18,10 @@ func NewServer(jv *auth.JWTValidator) *Server {
 	}
 }
 
-// HandleWS returns a function suitable for fiber websocket.New(...)
+// HandleWS returns a func that matches websocket.New handler signature
 func (s *Server) HandleWS() func(*websocket.Conn) {
 	return func(conn *websocket.Conn) {
-		// query params: token and room/chat_id
+		// query params token & chat_id (room)
 		token := conn.Query("token")
 		room := conn.Query("chat_id")
 		if token == "" || room == "" {
