@@ -7,7 +7,7 @@ import (
 
 type Server struct {
 	hub *Hub
-	svc interface{}
+	svc interface{} // optional link to service for message persistence
 	jv  *auth.JWTValidator
 }
 
@@ -32,14 +32,7 @@ func (s *Server) HandleWS() func(*websocket.Conn) {
 			_ = conn.Close()
 			return
 		}
-
-		c := &Connection{
-			ws:   conn,
-			send: make(chan interface{}, 256),
-			chat: chatID,
-			uid:  uid,
-			hub:  s.hub,
-		}
+		c := &Connection{ws: conn, send: make(chan interface{}, 256), chat: chatID, uid: uid, hub: s.hub}
 		s.hub.Register(chatID, c)
 		go c.writePump()
 		c.readPump()

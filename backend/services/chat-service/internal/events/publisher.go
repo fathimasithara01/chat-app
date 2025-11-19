@@ -14,12 +14,10 @@ type ChatCreatedEvent struct {
 	IsGroup bool     `json:"is_group"`
 }
 
-type Publisher struct {
-	nc *nats.Conn
-}
+type Publisher struct{ nc *nats.Conn }
 
-func NewPublisher(natsURL string) (*Publisher, error) {
-	nc, err := nats.Connect(natsURL)
+func NewPublisher(url string) (*Publisher, error) {
+	nc, err := nats.Connect(url)
 	if err != nil {
 		return nil, err
 	}
@@ -27,15 +25,11 @@ func NewPublisher(natsURL string) (*Publisher, error) {
 }
 
 func (p *Publisher) PublishChatCreated(chatID, name string, members []string, isGroup bool) error {
-	event := ChatCreatedEvent{
-		ChatID:  chatID,
-		Name:    name,
-		Members: members,
-		IsGroup: isGroup,
-	}
-	data, _ := json.Marshal(event)
-	if err := p.nc.Publish("chat.created", data); err != nil {
-		log.Println("Failed to publish chat.created:", err)
+	if p == nil || p.nc == nil { return nil }
+	ev := ChatCreatedEvent{ChatID: chatID, Name: name, Members: members, IsGroup: isGroup}
+	b, _ := json.Marshal(ev)
+	if err := p.nc.Publish("chat.created", b); err != nil {
+		log.Println("publish chat.created:", err)
 		return err
 	}
 	return nil

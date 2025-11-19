@@ -20,7 +20,13 @@ func (c *Connection) readPump() {
 		c.hub.Unregister(c.chat, c)
 		_ = c.ws.Close()
 	}()
-	c.ws.SetReadLimit(1024 * 16)
+	c.ws.SetReadLimit(1024 * 32)
+	c.ws.SetReadDeadline(time.Now().Add(60 * time.Second))
+	c.ws.SetPongHandler(func(string) error {
+		_ = c.ws.SetReadDeadline(time.Now().Add(60 * time.Second))
+		return nil
+	})
+
 	for {
 		_, data, err := c.ws.ReadMessage()
 		if err != nil {
@@ -28,12 +34,16 @@ func (c *Connection) readPump() {
 		}
 		var ev map[string]interface{}
 		if err := json.Unmarshal(data, &ev); err != nil {
+			// ignore invalid JSON from client, don't disconnect
 			continue
 		}
-		c.hub.Broadcast(c.chat, map[string]interface{}{
-			"from":  c.uid,
-			"event": ev,
-		})
+		msg := map[string]interface{}{
+			"type": "message",
+			"from": c.uid,
+			"data": ev,
+			"time": time.Now().Unix(),
+		}
+		c.hub.Broadcast(c.chat, msg)
 	}
 }
 
@@ -47,15 +57,23 @@ func (c *Connection) writePump() {
 		select {
 		case msg, ok := <-c.send:
 			if !ok {
-				_ = c.ws.WriteMessage(websocket.CloseMessage, []byte{})
+				_ = c.ws.WriteControl(websocket.CloseMessage, []byte{}, time.Now().Add(time.Second))
+				return
+			}
+			_ = c.ws.SetWriteDeadline(time.Now().Add(10 * time.Second))
+			w, err := c.ws.NextWriter(websocket.TextMessage)
+			if err != nil {
 				return
 			}
 			b, _ := json.Marshal(msg)
-			if err := c.ws.WriteMessage(websocket.TextMessage, b); err != nil {
+			if _, _ = w.Write(b); err != nil {
+				_ = w.Close()
 				return
 			}
+			_ = w.Close()
 		case <-ticker.C:
-			if err := c.ws.WriteMessage(websocket.PingMessage, []byte{}); err != nil {
+			_ = c.ws.SetWriteDeadline(time.Now().Add(5 * time.Second))
+			if err := c.ws.WriteControl(websocket.PingMessage, []byte("ping"), time.Now().Add(time.Second)); err != nil {
 				return
 			}
 		}

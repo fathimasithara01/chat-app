@@ -21,12 +21,19 @@ type Mongo struct {
 
 type JWTCfg struct {
 	PublicKeyPath string `yaml:"public_key_path"`
+	Algorithm     string `yaml:"algorithm"` // "RS256" or "HS256"
+	Secret        string `yaml:"secret"`    // for HS256
+}
+
+type NATS struct {
+	URL string `yaml:"url"`
 }
 
 type Config struct {
 	App   App    `yaml:"app"`
 	Mongo Mongo  `yaml:"mongo"`
 	JWT   JWTCfg `yaml:"jwt"`
+	NATS  NATS   `yaml:"nats"`
 }
 
 func Load() (*Config, error) {
@@ -38,7 +45,10 @@ func Load() (*Config, error) {
 		},
 		JWT: JWTCfg{
 			PublicKeyPath: "./keys/jwt_pub.pem",
+			Algorithm:     "RS256",
+			Secret:        "",
 		},
+		NATS: NATS{URL: "nats://localhost:4222"},
 	}
 
 	if _, err := os.Stat("config.yaml"); err == nil {
@@ -46,8 +56,11 @@ func Load() (*Config, error) {
 		_ = yaml.Unmarshal(b, cfg)
 	}
 
-	if cfg.JWT.PublicKeyPath == "" {
-		return nil, errors.New("jwt.public_key_path missing")
+	if cfg.JWT.PublicKeyPath == "" && cfg.JWT.Secret == "" && cfg.JWT.Algorithm == "RS256" {
+		return nil, errors.New("jwt.public_key_path missing for RS256")
+	}
+	if cfg.NATS.URL == "" {
+		return nil, errors.New("nats.url missing")
 	}
 
 	return cfg, nil

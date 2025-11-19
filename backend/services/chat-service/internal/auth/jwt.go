@@ -2,52 +2,73 @@ package auth
 
 import (
 	"crypto/rsa"
-	"crypto/x509"
-	"encoding/pem"
 	"errors"
+	"fmt"
 	"os"
 
 	"github.com/golang-jwt/jwt/v5"
 )
 
 type JWTValidator struct {
-	pub *rsa.PublicKey
+	alg    string
+	pubKey *rsa.PublicKey
+	secret []byte
 }
 
-func NewJWTValidator(path string) (*JWTValidator, error) {
-	b, err := os.ReadFile(path)
-	if err != nil {
-		return nil, err
+func NewJWTValidator(pubKeyPath, alg, secret string) (*JWTValidator, error) {
+	jv := &JWTValidator{alg: alg}
+	if alg == "RS256" {
+		b, err := os.ReadFile(pubKeyPath)
+		if err != nil {
+			return nil, fmt.Errorf("read pubkey: %w", err)
+		}
+		key, err := jwt.ParseRSAPublicKeyFromPEM(b)
+		if err != nil {
+			return nil, fmt.Errorf("parse pubkey: %w", err)
+		}
+		jv.pubKey = key
+	} else if alg == "HS256" {
+		if secret == "" {
+			return nil, errors.New("hs256 secret required")
+		}
+		jv.secret = []byte(secret)
+	} else {
+		return nil, errors.New("unsupported alg")
 	}
-	block, _ := pem.Decode(b)
-	if block == nil {
-		return nil, errors.New("failed to decode public key")
-	}
-	pubIfc, err := x509.ParsePKIXPublicKey(block.Bytes)
-	if err != nil {
-		return nil, err
-	}
-	pub, ok := pubIfc.(*rsa.PublicKey)
-	if !ok {
-		return nil, errors.New("not rsa public key")
-	}
-	return &JWTValidator{pub: pub}, nil
+	return jv, nil
 }
 
-func (j *JWTValidator) Validate(tokenStr string) (string, error) {
-	tok, err := jwt.Parse(tokenStr, func(t *jwt.Token) (interface{}, error) {
-		return j.pub, nil
-	}, jwt.WithValidMethods([]string{"RS256"}))
+// Validate returns subject (user id) on success
+func (j *JWTValidator) Validate(token string) (string, error) {
+	var keyFunc jwt.Keyfunc
+	if j.alg == "RS256" {
+		keyFunc = func(t *jwt.Token) (interface{}, error) {
+			if t.Method.Alg() != jwt.SigningMethodRS256.Alg() {
+				return nil, errors.New("unexpected signing method")
+			}
+			return j.pubKey, nil
+		}
+	} else {
+		keyFunc = func(t *jwt.Token) (interface{}, error) {
+			if t.Method.Alg() != jwt.SigningMethodHS256.Alg() {
+				return nil, errors.New("unexpected signing method")
+			}
+			return j.secret, nil
+		}
+	}
+
+	parser := jwt.NewParser(jwt.WithValidMethods([]string{j.alg}))
+	tok, err := parser.Parse(token, keyFunc)
 	if err != nil {
 		return "", err
 	}
-	if claims, ok := tok.Claims.(jwt.MapClaims); ok && tok.Valid {
-		if sub, ok := claims["sub"].(string); ok {
-			return sub, nil
-		}
-		if userID, ok := claims["user_id"].(string); ok {
-			return userID, nil
-		}
+	claims, ok := tok.Claims.(jwt.MapClaims)
+	if !ok || !tok.Valid {
+		return "", errors.New("invalid token")
 	}
-	return "", errors.New("invalid token")
+	sub, _ := claims["sub"].(string)
+	if sub == "" {
+		return "", errors.New("sub missing")
+	}
+	return sub, nil
 }

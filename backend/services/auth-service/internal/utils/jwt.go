@@ -83,6 +83,7 @@ func (j *JWTManager) GenerateAccessToken(userID string) (string, time.Time, erro
 	claims := &CustomClaims{
 		UserID: userID,
 		RegisteredClaims: jwt.RegisteredClaims{
+			Subject:   userID,
 			ExpiresAt: jwt.NewNumericDate(exp),
 			IssuedAt:  jwt.NewNumericDate(time.Now()),
 			Audience:  jwt.ClaimStrings{"access"},
@@ -99,9 +100,10 @@ func (j *JWTManager) GenerateRefreshToken(userID string) (string, time.Time, err
 	claims := &CustomClaims{
 		UserID: userID,
 		RegisteredClaims: jwt.RegisteredClaims{
+			Subject:   userID,
 			ExpiresAt: jwt.NewNumericDate(exp),
-			IssuedAt:  jwt.NewNumericDate(time.Now()),
-			Audience:  jwt.ClaimStrings{"refresh"},
+			IssuedAt: jwt.NewNumericDate(time.Now()),
+			Audience: jwt.ClaimStrings{"refresh"},
 		},
 	}
 	token := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
