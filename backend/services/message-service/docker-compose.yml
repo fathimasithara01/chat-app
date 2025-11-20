@@ -1,42 +1,20 @@
 version: '3.8'
-
 services:
-  mongodb:
-    image: mongo:6.0
-    container_name: chat_mongo
-    ports:
-      - "27017:27017"
-    environment:
-      MONGO_INITDB_DATABASE: chatdb
-    volumes:
-      - mongo_data:/data/db
-
+  mongo:
+    image: mongo:6
+    ports: ["27017:27017"]
+    volumes: ['./data/mongo:/data/db']
   redis:
     image: redis:7
-    container_name: chat_redis
-    ports:
-      - "6379:6379"
-    command: redis-server --requirepass fathimasithara
-
-  zookeeper:
-    image: wurstmeister/zookeeper
-    container_name: chat_zookeeper
-    ports:
-      - "2181:2181"
-
-  kafka:
-    image: wurstmeister/kafka
-    container_name: chat_kafka
-    ports:
-      - "9092:9092"
+    ports: ["6379:6379"]
+  nats:
+    image: nats:2
+    ports: ["4222:4222"]
+  message-service:
+    build: .
+    depends_on: [mongo, redis, nats]
+    ports: ["8084:8084"]
     environment:
-      KAFKA_BROKER_ID: 1
-      KAFKA_ADVERTISED_HOST_NAME: localhost
-      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092
-      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
-    depends_on:
-      - zookeeper
-
-volumes:
-  mongo_data:
+      - GO_ENV=development
+    volumes:
+      - .:/app

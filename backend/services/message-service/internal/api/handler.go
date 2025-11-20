@@ -1,144 +1,117 @@
 package api
 
 import (
+	"context"
+	"time"
+
+	"github.com/fathima-sithara/message-service/internal/events"
 	"github.com/fathima-sithara/message-service/internal/service"
 	"github.com/gofiber/fiber/v2"
 )
 
-
-type sendMessageReq struct {
-	ChatID   string `json:"chat_id" validate:"required"`
-	Content  string `json:"content"`
-	MsgType  string `json:"msg_type" validate:"required,oneof=text image audio video file"`
-	ReplyTo  string `json:"reply_to,omitempty"`
-	MediaURL string `json:"media_url"`
-	// Thumbnail string `json:"thumbnail,omitempty"`
+type Handlers struct {
+	svc *service.MessageService
+	pub *events.Publisher
 }
 
-func (s *Server) sendMessage(c *fiber.Ctx) error {
-	var req sendMessageReq
+func NewHandlers(svc *service.MessageService, pub *events.Publisher) *Handlers {
+	return &Handlers{svc: svc, pub: pub}
+}
+
+func (h *Handlers) sendMessage(c *fiber.Ctx) error {
+	var req struct {
+		ChatID  string `json:"chat_id"`
+		Content string `json:"content"`
+		MsgType string `json:"msg_type"`
+	}
 	if err := c.BodyParser(&req); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, "invalid payload")
+		return c.Status(400).JSON(fiber.Map{"error": "invalid body"})
 	}
-
-	if req.MsgType == "text" {
-		if req.Content == "" {
-			return fiber.NewError(fiber.StatusBadRequest, "content required for text messages")
-		}
-	} else {
-		if req.MediaURL == "" {
-			return fiber.NewError(fiber.StatusBadRequest, "media_url required for media messages")
-		}
-	}
-
-	userID := c.Locals("user_id").(string)
-
-	msg, err := s.cmd.SendMessage(c.Context(), service.SendMessageCommand{
-		ChatID:   req.ChatID,
-		UserID:   userID,
-		Content:  req.Content,
-		MsgType:  req.MsgType,
-		ReplyTo:  req.ReplyTo,
-		MediaURL: req.MediaURL,
-		// Thumbnail: req.Thumbnail,
-	})
+	user := c.Locals("user_id").(string)
+	ctx, cancel := context.WithTimeout(c.Context(), 5*time.Second)
+	defer cancel()
+	msg, err := h.svc.SendMessage(ctx, req.ChatID, user, req.Content, req.MsgType)
 	if err != nil {
-		return fiber.NewError(fiber.StatusInternalServerError, err.Error())
+		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
 	}
-
-	s.ws.Hub().Broadcast(req.ChatID, fiber.Map{
-		"event":   "message_created",
-		"message": msg,
-	})
-
-	return c.JSON(fiber.Map{
-		"message": msg,
-		"status":  "sent",
-	})
-
+	if h.pub != nil {
+		h.pub.PublishMessageCreated(req.ChatID, msg)
+	}
+	return c.Status(201).JSON(fiber.Map{"status": "ok", "data": msg})
 }
 
-func (s *Server) listMessages(c *fiber.Ctx) error {
+func (h *Handlers) listMessages(c *fiber.Ctx) error {
 	chatID := c.Params("chat_id")
-	if chatID == "" {
-		return fiber.NewError(fiber.StatusBadRequest, "missing chat_id")
-	}
-
-	msgs, err := s.qry.ListMessages(c.Context(), chatID)
+	limit := int64(50)
+	msgs, err := h.svc.ListMessages(c.Context(), chatID, limit, time.Now())
 	if err != nil {
-		return fiber.NewError(fiber.StatusInternalServerError, err.Error())
+		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
 	}
-
-	return c.JSON(fiber.Map{"messages": msgs})
+	return c.JSON(fiber.Map{"status": "ok", "data": msgs})
 }
 
-func (s *Server) markRead(c *fiber.Ctx) error {
+func (h *Handlers) markRead(c *fiber.Ctx) error {
 	msgID := c.Params("msg_id")
-	userID := c.Locals("user_id").(string)
-
-	if err := s.cmd.MarkAsRead(c.Context(), msgID, userID); err != nil {
-		return fiber.NewError(fiber.StatusInternalServerError, err.Error())
+	user := c.Locals("user_id").(string)
+	chatID, err := h.svc.MarkRead(c.Context(), msgID, user)
+	if err != nil {
+		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
 	}
-
-	return c.JSON(fiber.Map{"status": "ok"})
+	return c.JSON(fiber.Map{"status": "ok", "chat_id": chatID})
 }
 
-type editReq struct {
-	Content string `json:"content" validate:"required"`
-}
-
-func (s *Server) editMessage(c *fiber.Ctx) error {
+func (h *Handlers) editMessage(c *fiber.Ctx) error {
 	msgID := c.Params("msg_id")
-	userID := c.Locals("user_id").(string)
-
-	var req editReq
-	if err := c.BodyParser(&req); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, "invalid payload")
+	var body struct {
+		Content string `json:"content"`
 	}
-
-	msg, err := s.cmd.EditMessage(c.Context(), msgID, userID, req.Content)
+	if err := c.BodyParser(&body); err != nil {
+		return c.Status(400).JSON(fiber.Map{"error": "invalid"})
+	}
+	user := c.Locals("user_id").(string)
+	chatID, err := h.svc.EditMessage(c.Context(), msgID, user, body.Content)
 	if err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, err.Error())
+		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
 	}
-
-	s.ws.Hub().Broadcast(msg.ChatID, fiber.Map{
-		"event":   "message_updated",
-		"message": msg,
-	})
-
-	return c.JSON(msg)
+	return c.JSON(fiber.Map{"status": "ok", "chat_id": chatID})
 }
 
-func (s *Server) deleteMessage(c *fiber.Ctx) error {
+func (h *Handlers) deleteMessage(c *fiber.Ctx) error {
 	msgID := c.Params("msg_id")
-	userID := c.Locals("user_id").(string)
-
-	chatID, err := s.cmd.DeleteMessage(c.Context(), msgID, userID)
-	if err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, err.Error())
+	user := c.Locals("user_id").(string)
+	delType := c.Query("type", "user")
+	if delType == "all" {
+		chatID, err := h.svc.DeleteMessageForAll(c.Context(), msgID, user)
+		if err != nil {
+			return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+		}
+		return c.JSON(fiber.Map{"status": "ok", "chat_id": chatID})
 	}
-
-	s.ws.Hub().Broadcast(chatID, fiber.Map{
-		"event":     "message_deleted",
-		"messageId": msgID,
-	})
-
-	return c.JSON(fiber.Map{"status": "deleted"})
+	chatID, err := h.svc.DeleteMessageForUser(c.Context(), msgID, user)
+	if err != nil {
+		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+	}
+	return c.JSON(fiber.Map{"status": "ok", "chat_id": chatID})
 }
 
-func (s *Server) mediaUploadURL(c *fiber.Ctx) error {
-	url, err := s.cmd.GeneratePresignedUploadURL(c.Context())
-	if err != nil {
-		return fiber.NewError(fiber.StatusInternalServerError, err.Error())
+func (h *Handlers) mediaUploadURL(c *fiber.Ctx) error {
+	var body struct {
+		Filename    string `json:"filename"`
+		ContentType string `json:"content_type"`
 	}
-	return c.JSON(fiber.Map{"upload_url": url})
+	if err := c.BodyParser(&body); err != nil {
+		return c.Status(400).JSON(fiber.Map{"error": "invalid"})
+	}
+	uploadURL := "https://fake-s3.local/upload/" + body.Filename + "?signature=stub"
+	fileURL := "https://cdn.local/" + body.Filename
+	return c.JSON(fiber.Map{"upload_url": uploadURL, "file_url": fileURL})
 }
 
-func (s *Server) lastMessage(c *fiber.Ctx) error {
+func (h *Handlers) lastMessage(c *fiber.Ctx) error {
 	chatID := c.Params("chat_id")
-	msg, err := s.qry.LastMessage(c.Context(), chatID)
+	m, err := h.svc.GetLastMessage(c.Context(), chatID)
 	if err != nil {
-		return fiber.NewError(fiber.StatusInternalServerError, err.Error())
+		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
 	}
-	return c.JSON(msg)
+	return c.JSON(fiber.Map{"status": "ok", "data": m})
 }

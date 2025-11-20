@@ -5,75 +5,89 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"syscall"
 	"time"
 
 	"github.com/fathima-sithara/message-service/internal/api"
 	"github.com/fathima-sithara/message-service/internal/auth"
 	"github.com/fathima-sithara/message-service/internal/config"
-	"github.com/fathima-sithara/message-service/internal/kafka"
+	"github.com/fathima-sithara/message-service/internal/events"
 	"github.com/fathima-sithara/message-service/internal/repository"
 	"github.com/fathima-sithara/message-service/internal/service"
-	"github.com/fathima-sithara/message-service/internal/ws"
-	"github.com/joho/godotenv"
+
 	"github.com/redis/go-redis/v9"
+	"go.mongodb.org/mongo-driver/mongo"
+	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
 func main() {
-	_ = godotenv.Load()
-
 	cfg, err := config.Load()
 	if err != nil {
-		log.Fatalf("config load: %v", err)
+		log.Fatal("config:", err)
 	}
-
-	mc, err := repository.NewMongoClient()
-	if err != nil {
-		log.Fatalf("mongo init: %v", err)
-	}
-	defer func() { _ = mc.Disconnect(context.Background()) }()
-
-	rdb := redis.NewClient(&redis.Options{
-		Addr:     cfg.Redis.Addr,
-		Password: cfg.Redis.Password,
-		DB:       cfg.Redis.DB,
-	})
-	defer rdb.Close()
-
-	kprod := kafka.NewProducer(cfg.Kafka.Brokers, cfg.Kafka.TopicOut)
-	kcons := kafka.NewConsumer(cfg.Kafka.Brokers, cfg.Kafka.TopicIn, cfg.Kafka.GroupID)
-
-	repo := repository.NewMongoRepository(mc.Database(cfg.Database.Name).Collection("messages"))
-	cmdSvc := service.NewCommandService(repo, rdb, kprod, cfg)
-	qrySvc := service.NewQueryService(repo, rdb, cfg)
-
-	jv, err := auth.NewJWTValidator(cfg.JWT.PublicKeyPath)
-	if err != nil {
-		panic(err)
-	}
-	wsrv := ws.NewServer(cmdSvc, qrySvc, jv)
-
-	go kcons.Start(func(key string, value []byte) {
-		wsrv.HandleEventMessage(key, value)
-	})
-
-	app := api.NewServer(cfg, cmdSvc, qrySvc, wsrv)
-
-	go func() {
-		if err := app.Listen(":" + cfg.App.PortString()); err != nil {
-			log.Fatalf("server listen: %v", err)
-		}
-	}()
-	log.Printf("chat-service started on :%s", cfg.App.PortString())
-
-	quit := make(chan os.Signal, 1)
-	signal.Notify(quit, os.Interrupt)
-	<-quit
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
+	client, err := mongo.Connect(ctx, options.Client().ApplyURI(cfg.Mongo.URI))
+	if err != nil {
+		log.Fatal("mongo connect:", err)
+	}
+	db := client.Database(cfg.Mongo.DB)
+	repo := repository.NewMongoRepository(db)
 
-	_ = app.ShutdownWithContext(ctx)
-	_ = kprod.Close(context.Background())
-	_ = kcons.Close(context.Background())
-	log.Println("chat-service stopped")
+	// redis optional
+	rdb := redis.NewClient(&redis.Options{Addr: cfg.Redis.Addr, DB: cfg.Redis.DB})
+
+	// jwt validator
+	var jv *auth.JWTValidator
+	if cfg.JWT.Algorithm == "RS256" {
+		jv, err = auth.NewJWTValidatorRS256(cfg.JWT.PublicKeyPath)
+	} else {
+		jv, err = auth.NewJWTValidatorHS256(cfg.JWT.HSSecret)
+	}
+	if err != nil {
+		log.Fatal("jwt:", err)
+	}
+
+	// nats publisher
+	pub, err := events.NewPublisher(cfg.NATS.URL)
+	if err != nil {
+		log.Println("nats publisher warn:", err)
+		pub = nil
+	}
+
+	// nats subscriber (optional, to init chats)
+	sub, err := events.NewSubscriber(cfg.NATS.URL, repo)
+	if err != nil {
+		log.Println("nats subscriber warn:", err)
+	} else {
+		go sub.Start("message-service")
+	}
+
+	// service + api
+	msgSvc := service.NewMessageService(repo, rdb)
+	app := api.NewServer(cfg, msgSvc, jv, pub)
+
+	errs := make(chan error, 1)
+	go func() { errs <- app.Listen(":" + cfg.App.PortString()) }()
+	log.Printf("message-service started on :%s", cfg.App.PortString())
+
+	// graceful shutdown
+	sig := make(chan os.Signal, 1)
+	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
+	select {
+	case e := <-errs:
+		log.Fatalf("server error: %v", e)
+	case s := <-sig:
+		log.Printf("signal received: %v", s)
+	}
+
+	shutdownCtx, cancel2 := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel2()
+	if err := app.Shutdown(); err != nil {
+		log.Println("fiber shutdown:", err)
+	}
+	_ = client.Disconnect(shutdownCtx)
+	_ = rdb.Close()
+	log.Println("shutdown complete")
 }

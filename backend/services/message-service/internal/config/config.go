@@ -14,81 +14,58 @@ type App struct {
 
 func (a *App) PortString() string { return fmt.Sprintf("%d", a.Port) }
 
-type Database struct {
-	URI  string `yaml:"uri"`
-	Name string `yaml:"name"`
+type Mongo struct {
+	URI string `yaml:"uri"`
+	DB  string `yaml:"db"`
 }
 
 type Redis struct {
-	Addr     string `yaml:"addr"`
-	Password string `yaml:"password"`
-	DB       int    `yaml:"db"`
+	Addr string `yaml:"addr"`
+	DB   int    `yaml:"db"`
 }
 
-type Kafka struct {
-	Brokers  []string `yaml:"brokers"`
-	TopicIn  string   `yaml:"topic_in"`
-	TopicOut string   `yaml:"topic_out"`
-	GroupID  string   `yaml:"group_id"`
+type NATS struct {
+	URL string `yaml:"url"`
 }
 
 type JWT struct {
+	Algorithm     string `yaml:"algorithm"`
 	PublicKeyPath string `yaml:"public_key_path"`
+	HSSecret      string `yaml:"hs_secret"`
 }
 
 type Config struct {
-	App      App      `yaml:"app"`
-	Database Database `yaml:"database"`
-	Redis    Redis    `yaml:"redis"`
-	Kafka    Kafka    `yaml:"kafka"`
-	JWT      JWT      `yaml:"jwt"`
+	App   App   `yaml:"app"`
+	Mongo Mongo `yaml:"mongo"`
+	Redis Redis `yaml:"redis"`
+	NATS  NATS  `yaml:"nats"`
+	JWT   JWT   `yaml:"jwt"`
 }
 
 func Load() (*Config, error) {
 	cfg := &Config{
 		App: App{Port: 8084},
-		Database: Database{
-			URI:  "mongodb://127.0.0.1:27017",
-			Name: "chatdb",
+		Mongo: Mongo{
+			URI: "mongodb://localhost:27017",
+			DB:  "chatapp",
 		},
-		Redis: Redis{Addr: "127.0.0.1:6379", DB: 0},
-		Kafka: Kafka{
-			Brokers:  []string{"localhost:9092"},
-			TopicIn:  "chat_messages_in",
-			TopicOut: "chat_messages_out",
-			GroupID:  "chat-service-group",
+		Redis: Redis{Addr: "localhost:6379", DB: 0},
+		NATS:  NATS{URL: "nats://localhost:4222"},
+		JWT: JWT{
+			Algorithm:     "RS256",
+			PublicKeyPath: "./keys/jwt_pub.pem",
+			HSSecret:      "",
 		},
-		JWT: JWT{PublicKeyPath: "./keys/jwt_pub.pem"},
 	}
-
-	if _, err := os.Stat("config/config.yaml"); err == nil {
-		b, err := os.ReadFile("config/config.yaml")
-		if err != nil {
-			return nil, err
-		}
-		if err := yaml.Unmarshal(b, cfg); err != nil {
-			return nil, err
-		}
+	if _, err := os.Stat("config.yaml"); err == nil {
+		b, _ := os.ReadFile("config.yaml")
+		_ = yaml.Unmarshal(b, cfg)
 	}
-
-	if v := os.Getenv("MONGODB_URI"); v != "" {
-		cfg.Database.URI = v
+	if cfg.NATS.URL == "" {
+		return nil, errors.New("nats.url missing")
 	}
-	if v := os.Getenv("MONGO_NAME"); v != "" {
-		cfg.Database.Name = v
-	}
-	if v := os.Getenv("REDIS_ADDR"); v != "" {
-		cfg.Redis.Addr = v
-	}
-	if v := os.Getenv("KAFKA_BROKER"); v != "" {
-		cfg.Kafka.Brokers = []string{v}
-	}
-	if v := os.Getenv("JWT_PUBLIC_KEY_PATH"); v != "" {
-		cfg.JWT.PublicKeyPath = v
-	}
-
-	if cfg.Database.URI == "" {
-		return nil, errors.New("database.uri required")
+	if cfg.JWT.Algorithm == "RS256" && cfg.JWT.PublicKeyPath == "" {
+		return nil, errors.New("jwt.public_key_path missing")
 	}
 	return cfg, nil
 }

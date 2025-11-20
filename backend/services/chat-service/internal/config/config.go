@@ -41,7 +41,7 @@ func Load() (*Config, error) {
 		App: App{Port: 8083},
 		Mongo: Mongo{
 			URI:      "mongodb://localhost:27017",
-			Database: "chatdb",
+			Database: "chatapp",
 		},
 		JWT: JWTCfg{
 			PublicKeyPath: "./keys/jwt_pub.pem",

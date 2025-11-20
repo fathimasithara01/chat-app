@@ -2,52 +2,67 @@ package auth
 
 import (
 	"crypto/rsa"
-	"crypto/x509"
-	"encoding/pem"
 	"errors"
+	"fmt"
 	"os"
 
 	"github.com/golang-jwt/jwt/v5"
 )
 
 type JWTValidator struct {
-	pub *rsa.PublicKey
+	alg    string
+	pubKey *rsa.PublicKey
+	secret []byte
 }
 
-func NewJWTValidator(path string) (*JWTValidator, error) {
-	b, err := os.ReadFile(path)
+func NewJWTValidatorRS256(pubPath string) (*JWTValidator, error) {
+	b, err := os.ReadFile(pubPath)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("read pubkey: %w", err)
 	}
-	block, _ := pem.Decode(b)
-	if block == nil {
-		return nil, errors.New("failed to decode public key")
-	}
-	pubIfc, err := x509.ParsePKIXPublicKey(block.Bytes)
+	key, err := jwt.ParseRSAPublicKeyFromPEM(b)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("parse rsa pubkey: %w", err)
 	}
-	pub, ok := pubIfc.(*rsa.PublicKey)
-	if !ok {
-		return nil, errors.New("not rsa public key")
-	}
-	return &JWTValidator{pub: pub}, nil
+	return &JWTValidator{alg: "RS256", pubKey: key}, nil
 }
 
-func (j *JWTValidator) Validate(tokenStr string) (string, error) {
-	tok, err := jwt.Parse(tokenStr, func(t *jwt.Token) (interface{}, error) {
-		return j.pub, nil
-	}, jwt.WithValidMethods([]string{"RS256"}))
+func NewJWTValidatorHS256(secret string) (*JWTValidator, error) {
+	if secret == "" {
+		return nil, errors.New("hs256 secret empty")
+	}
+	return &JWTValidator{alg: "HS256", secret: []byte(secret)}, nil
+}
+
+func (j *JWTValidator) Validate(token string) (string, error) {
+	var keyFunc jwt.Keyfunc
+	if j.alg == "RS256" {
+		keyFunc = func(t *jwt.Token) (interface{}, error) {
+			if t.Method.Alg() != jwt.SigningMethodRS256.Alg() {
+				return nil, errors.New("unexpected signing method")
+			}
+			return j.pubKey, nil
+		}
+	} else {
+		keyFunc = func(t *jwt.Token) (interface{}, error) {
+			if t.Method.Alg() != jwt.SigningMethodHS256.Alg() {
+				return nil, errors.New("unexpected signing method")
+			}
+			return j.secret, nil
+		}
+	}
+	parser := jwt.NewParser(jwt.WithValidMethods([]string{j.alg}))
+	tok, err := parser.Parse(token, keyFunc)
 	if err != nil {
 		return "", err
 	}
-	if claims, ok := tok.Claims.(jwt.MapClaims); ok && tok.Valid {
-		if sub, ok := claims["sub"].(string); ok {
-			return sub, nil
-		}
-		if userID, ok := claims["user_id"].(string); ok {
-			return userID, nil
-		}
+	claims, ok := tok.Claims.(jwt.MapClaims)
+	if !ok || !tok.Valid {
+		return "", errors.New("invalid token")
 	}
-	return "", errors.New("invalid token")
+	sub, _ := claims["sub"].(string)
+	if sub == "" {
+		return "", errors.New("sub missing")
+	}
+	return sub, nil
 }
