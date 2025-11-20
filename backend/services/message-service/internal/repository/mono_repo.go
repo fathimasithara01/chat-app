@@ -44,7 +44,6 @@ func (r *MongoRepository) SaveMessage(ctx context.Context, m *domain.Message) er
 	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
 
-	// ensure arrays/maps are initialized so BSON stores correct types
 	if m.ReadBy == nil {
 		m.ReadBy = []string{}
 	}
@@ -82,7 +81,6 @@ func (r *MongoRepository) GetMessages(ctx context.Context, chatID string, limit 
 		if err := cur.Decode(&m); err != nil {
 			return nil, err
 		}
-		// normalize to avoid null -> non-array problems in future writes
 		if m.ReadBy == nil {
 			m.ReadBy = []string{}
 		}
@@ -140,7 +138,6 @@ func (r *MongoRepository) SoftDeleteMessage(ctx context.Context, messageID, user
 	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
 
-	// 1️⃣ Fix legacy documents where deleted_for is null/missing/not array
 	_, _ = r.msgColl.UpdateOne(
 		ctx,
 		bson.M{
@@ -156,7 +153,6 @@ func (r *MongoRepository) SoftDeleteMessage(ctx context.Context, messageID, user
 		},
 	)
 
-	// 2️⃣ Now safely add user
 	res := r.msgColl.FindOneAndUpdate(
 		ctx,
 		bson.M{"_id": messageID},
@@ -186,7 +182,6 @@ func (r *MongoRepository) MarkRead(ctx context.Context, messageID, userID string
 	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
 
-	// 1️⃣ Fix legacy messages: if read_by is null or missing, convert to array
 	_, _ = r.msgColl.UpdateOne(ctx,
 		bson.M{
 			"_id": messageID,
@@ -201,7 +196,6 @@ func (r *MongoRepository) MarkRead(ctx context.Context, messageID, userID string
 		},
 	)
 
-	// 2️⃣ Now safely add user to read_by
 	res := r.msgColl.FindOneAndUpdate(
 		ctx,
 		bson.M{"_id": messageID},
@@ -221,7 +215,6 @@ func (r *MongoRepository) AddReaction(ctx context.Context, messageID, emoji, use
 	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
 
-	// Ensure reactions map exists and the specific emoji is an array
 	update := bson.M{
 		"$setOnInsert": bson.M{"reactions": bson.M{}},
 		"$addToSet":    bson.M{"reactions." + emoji: userID},

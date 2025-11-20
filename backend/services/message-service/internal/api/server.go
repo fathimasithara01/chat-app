@@ -16,7 +16,6 @@ func NewServer(cfg *config.Config, svc *service.MessageService, jv *auth.JWTVali
 
 	api := app.Group("/v1")
 
-	// auth middleware expects Authorization: Bearer <token> with sub
 	api.Use(func(c *fiber.Ctx) error {
 		hdr := c.Get("Authorization")
 		if hdr == "" {

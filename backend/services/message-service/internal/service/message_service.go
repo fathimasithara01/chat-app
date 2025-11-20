@@ -35,7 +35,7 @@ func (s *MessageService) SendMessage(ctx context.Context, chatID, senderID, cont
 		Content:    enc,
 		MsgType:    msgType,
 		CreatedAt:  time.Now().UTC(),
-		ReadBy:     []string{}, // initialize arrays/maps
+		ReadBy:     []string{},
 		DeletedFor: []string{},
 		Reactions:  map[string][]string{},
 	}

@@ -35,10 +35,8 @@ func main() {
 	db := client.Database(cfg.Mongo.DB)
 	repo := repository.NewMongoRepository(db)
 
-	// redis optional
 	rdb := redis.NewClient(&redis.Options{Addr: cfg.Redis.Addr, DB: cfg.Redis.DB})
 
-	// jwt validator
 	var jv *auth.JWTValidator
 	if cfg.JWT.Algorithm == "RS256" {
 		jv, err = auth.NewJWTValidatorRS256(cfg.JWT.PublicKeyPath)
@@ -49,14 +47,12 @@ func main() {
 		log.Fatal("jwt:", err)
 	}
 
-	// nats publisher
 	pub, err := events.NewPublisher(cfg.NATS.URL)
 	if err != nil {
 		log.Println("nats publisher warn:", err)
 		pub = nil
 	}
 
-	// nats subscriber (optional, to init chats)
 	sub, err := events.NewSubscriber(cfg.NATS.URL, repo)
 	if err != nil {
 		log.Println("nats subscriber warn:", err)
@@ -64,7 +60,6 @@ func main() {
 		go sub.Start("message-service")
 	}
 
-	// service + api
 	msgSvc := service.NewMessageService(repo, rdb)
 	app := api.NewServer(cfg, msgSvc, jv, pub)
 
@@ -72,7 +67,6 @@ func main() {
 	go func() { errs <- app.Listen(":" + cfg.App.PortString()) }()
 	log.Printf("message-service started on :%s", cfg.App.PortString())
 
-	// graceful shutdown
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
 	select {
