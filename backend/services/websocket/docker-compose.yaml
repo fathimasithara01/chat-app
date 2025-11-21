@@ -1,0 +1,20 @@
+version: "3.8"
+services:
+  redis:
+    image: redis:7
+    ports:
+      - "6379:6379"
+  ws:
+    build: .
+    environment:
+      - WS_ADDR=:8081
+      - REDIS_ADDR=redis:6379
+      - REDIS_DB=0
+      - JWT_ALG=RS256
+      - JWT_PUBKEY=/keys/pub.pem
+    ports:
+      - "8081:8081"
+    depends_on:
+      - redis
+    volumes:
+      - ./keys:/keys

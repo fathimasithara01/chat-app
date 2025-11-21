@@ -34,7 +34,6 @@ func (s *Subscriber) Start(queue string) {
 		if err := json.Unmarshal(m.Data, &ev); err != nil {
 			log.Println("invalid chat.created event:", err); return
 		}
-		// idempotent init with retry
 		for i := 0; i < 3; i++ {
 			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 			err := s.repo.InitChat(ctx, ev.ChatID, ev.Members, ev.IsGroup)
