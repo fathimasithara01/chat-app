@@ -1,25 +1,35 @@
-package redis
+package redisclient
 
 import (
 	"context"
+	"fmt"
+	"time"
 
 	"github.com/redis/go-redis/v9"
 )
 
-type Redis struct {
-	client *redis.Client
+var rdb *redis.Client
+
+func Init(addr, password string, db int) {
+	fmt.Println("REDIS USED:", addr)
+
+	rdb = redis.NewClient(&redis.Options{
+		Addr:     addr,
+		Password: password,
+		DB:       db,
+	})
+	_ = rdb.Ping(context.Background()).Err()
 }
 
-func New(url string) *Redis {
-	opt, _ := redis.ParseURL(url)
-	client := redis.NewClient(opt)
-	return &Redis{client: client}
-}
+func Client() *redis.Client { return rdb }
 
-func (r *Redis) Publish(ctx context.Context, channel string, msg []byte) error {
-	return r.client.Publish(ctx, channel, msg).Err()
-}
-
-func (r *Redis) Subscribe(channel string) *redis.PubSub {
-	return r.client.Subscribe(context.Background(), channel)
+func Close() error {
+	if rdb == nil {
+		return nil
+	}
+	// allow graceful close
+	_ = rdb.Close()
+	// small wait to flush
+	time.Sleep(50 * time.Millisecond)
+	return nil
 }

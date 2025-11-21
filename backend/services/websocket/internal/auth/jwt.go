@@ -14,43 +14,57 @@ type JWTValidator struct {
 	publicKey *rsa.PublicKey
 }
 
-func NewJWTValidator(pub *rsa.PublicKey) *JWTValidator {
-	return &JWTValidator{publicKey: pub}
+func NewJWTValidatorRS256(pubPath string) (*JWTValidator, error) {
+	b, err := ioutil.ReadFile(pubPath)
+	if err != nil {
+		return nil, err
+	}
+	block, _ := pem.Decode(b)
+	if block == nil {
+		return nil, errors.New("invalid public key pem")
+	}
+	var parsed interface{}
+	if block.Type == "PUBLIC KEY" {
+		parsed, err = x509.ParsePKIXPublicKey(block.Bytes)
+	} else {
+		parsed, err = x509.ParsePKCS1PublicKey(block.Bytes)
+	}
+	if err != nil {
+		return nil, err
+	}
+	rsaPub, ok := parsed.(*rsa.PublicKey)
+	if !ok {
+		return nil, errors.New("not rsa public key")
+	}
+	return &JWTValidator{publicKey: rsaPub}, nil
 }
 
-func (v *JWTValidator) Validate(tokenStr string) (string, error) {
-	token, err := jwt.Parse(tokenStr, func(t *jwt.Token) (interface{}, error) {
-		if t.Method.Alg() != jwt.SigningMethodRS256.Alg() {
-			return nil, errors.New("unexpected signing method")
+// Validate returns sub (user id) from token or error
+func (j *JWTValidator) Validate(tokenStr string) (string, error) {
+	tok, err := jwt.Parse(tokenStr, func(t *jwt.Token) (interface{}, error) {
+		// only allow RSA
+		if _, ok := t.Method.(*jwt.SigningMethodRSA); !ok {
+			return nil, errors.New("invalid signing method")
 		}
-		return v.publicKey, nil
+		return j.publicKey, nil
 	})
-
-	if err != nil || !token.Valid {
+	if err != nil {
+		return "", err
+	}
+	if !tok.Valid {
 		return "", errors.New("invalid token")
 	}
-
-	claims := token.Claims.(jwt.MapClaims)
-	userID := claims["sub"].(string)
-
-	return userID, nil
-}
-
-func LoadRSAPublicKey(path string) (*rsa.PublicKey, error) {
-	data, err := ioutil.ReadFile(path)
-	if err != nil {
-		return nil, err
+	claims, ok := tok.Claims.(jwt.MapClaims)
+	if !ok {
+		return "", errors.New("invalid claims")
 	}
-
-	block, _ := pem.Decode(data)
-	if block == nil {
-		return nil, err
+	// expecting `sub` to be user id
+	if sub, ok := claims["sub"].(string); ok && sub != "" {
+		return sub, nil
 	}
-
-	pub, err := x509.ParsePKIXPublicKey(block.Bytes)
-	if err != nil {
-		return nil, err
+	// fallback to user_id claim
+	if uid, ok := claims["user_id"].(string); ok && uid != "" {
+		return uid, nil
 	}
-
-	return pub.(*rsa.PublicKey), nil
+	return "", errors.New("sub missing")
 }
