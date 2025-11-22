@@ -1,14 +1,16 @@
 package ws
 
 import (
+	"net/http"
+
 	"github.com/fathima-sithara/websocket/internal/auth"
 	"github.com/fathima-sithara/websocket/internal/config"
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/websocket/v2"
 )
 
-// NewServerApp wires the hub and jwt validator into Fiber app.
-func NewServerApp(hub *Hub, jv *auth.JWTValidator, cfg *config.Config) *fiber.App {
+// NewServer wires hub and jwt validator into Fiber app.
+func NewServer(hub *Hub, jv *auth.JWTValidator, cfg *config.Config) *fiber.App {
 	app := fiber.New()
 
 	app.Get("/health", func(c *fiber.Ctx) error {
@@ -16,34 +18,46 @@ func NewServerApp(hub *Hub, jv *auth.JWTValidator, cfg *config.Config) *fiber.Ap
 	})
 
 	app.Get("/ws", websocket.New(func(conn *websocket.Conn) {
-		// Basic auth extraction
+		// 1. Token from query
 		token := conn.Query("token")
+
+		// 2. Fallback to subprotocol only if needed
 		if token == "" {
-			_ = conn.Close()
-			return
+			token = conn.Subprotocol()
 		}
-		sub, err := jv.Validate(token)
-		if err != nil {
-			_ = conn.Close()
-			return
-		}
-		chatID := conn.Query("chat_id")
-		if chatID == "" {
-			_ = conn.Close()
+
+		if token == "" {
+			conn.Close()
 			return
 		}
 
+		// Validate JWT
+		sub, err := jv.Validate(token)
+		if err != nil {
+			conn.Close()
+			return
+		}
+
+		// chat_id required
+		chatID := conn.Query("chat_id")
+		if chatID == "" {
+			conn.Close()
+			return
+		}
+
+		// Create client
 		client := NewClient(conn, sub, chatID, hub, cfg.RateLimitPerSec)
 		hub.Register(client)
 
-		// writer goroutine & blocking read
 		go client.writePump()
 		client.readPump()
 	}))
 
-	// presence endpoint
 	app.Get("/presence/:user_id", func(c *fiber.Ctx) error {
 		uid := c.Params("user_id")
+		if uid == "" {
+			return c.Status(http.StatusBadRequest).JSON(fiber.Map{"error": "user_id required"})
+		}
 		ok := hub.CheckPresence(uid)
 		return c.JSON(fiber.Map{"user_id": uid, "online": ok})
 	})

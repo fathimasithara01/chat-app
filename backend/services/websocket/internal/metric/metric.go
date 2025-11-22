@@ -1,14 +1,7 @@
-package metrics
+package metric
 
-import "github.com/prometheus/client_golang/prometheus"
-
-var (
-	Connections = prometheus.NewGauge(prometheus.GaugeOpts{
-		Name: "ws_active_connections",
-		Help: "Active websocket connections",
-	})
-)
+import "fmt"
 
 func Init() {
-	prometheus.MustRegister(Connections)
+	fmt.Println("metrics init (stub) - integrate prometheus client as needed")
 }

@@ -21,20 +21,15 @@ type Config struct {
 	EnvLoaded        bool
 }
 
-// sanitize removes whitespace, quotes & BOM issues.
 func sanitize(s string) string {
 	s = strings.TrimSpace(s)
 	s = strings.Trim(s, `"`)
 	s = strings.Trim(s, `'`)
-
-	// Remove BOM if present
 	s = strings.TrimPrefix(s, "\uFEFF")
-
 	return s
 }
 
 func Load() *Config {
-	// Load .env silently, even if missing
 	err := godotenv.Load()
 	envLoaded := err == nil
 
@@ -66,10 +61,13 @@ func Load() *Config {
 		}
 	}
 
-	// override values
 	overrideInt("PORT", &cfg.Port)
 	overrideString("REDIS_ADDR", &cfg.RedisAddr)
-	overrideString("REDIS_PASS", &cfg.RedisPassword)
+	if raw := os.Getenv("REDIS_PASS"); raw != "" {
+		cfg.RedisPassword = sanitize(raw)
+	} else {
+		overrideString("REDIS_PASSWORD", &cfg.RedisPassword)
+	}
 	overrideInt("REDIS_DB", &cfg.RedisDB)
 
 	overrideString("JWT_PUBLIC_KEY_PATH", &cfg.PublicKeyPath)
@@ -79,27 +77,13 @@ func Load() *Config {
 		cfg.EnablePrometheus = true
 	}
 
-	// Validation: Redis address must include ":"
 	if !strings.Contains(cfg.RedisAddr, ":") {
-		log.Fatalf("❌ Invalid REDIS_ADDR: %s (must be host:port)", cfg.RedisAddr)
+		log.Fatalf(" Invalid REDIS_ADDR: %s (must be host:port)", cfg.RedisAddr)
 	}
 
 	if cfg.Port <= 0 || cfg.Port > 65535 {
-		log.Fatalf("❌ Invalid PORT: %d", cfg.Port)
+		log.Fatalf(" Invalid PORT: %d", cfg.Port)
 	}
-
-	// Pretty print configuration
-	fmt.Println("────────────────────────────────────────────────────────")
-	fmt.Println("              🚀 CONFIGURATION LOADED")
-	fmt.Println("────────────────────────────────────────────────────────")
-	fmt.Printf("  ENV Loaded:          %v\n", cfg.EnvLoaded)
-	fmt.Printf("  Service Port:        %d\n", cfg.Port)
-	fmt.Printf("  Redis Address:       %s\n", cfg.RedisAddr)
-	fmt.Printf("  Redis DB:            %d\n", cfg.RedisDB)
-	fmt.Printf("  JWT Public Key:      %s\n", cfg.PublicKeyPath)
-	fmt.Printf("  Rate Limit (RPS):    %d\n", cfg.RateLimitPerSec)
-	fmt.Printf("  Prometheus Enabled:  %v\n", cfg.EnablePrometheus)
-	fmt.Println("────────────────────────────────────────────────────────")
 
 	return cfg
 }
