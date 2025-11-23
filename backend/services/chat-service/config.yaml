@@ -1,0 +1,11 @@
+app:
+  port: 8083
+mongo:
+  uri: "mongodb://localhost:27017"
+  database: "chatapp"
+nats:
+  url: "nats://localhost:4222"
+jwt:
+  public_key_path: "./keys/jwt_pub.pem"
+  algorithm: "RS256"
+  secret: ""
