@@ -1,0 +1,22 @@
+server:
+  port: "8080"
+  read_timeout_seconds: 15
+  write_timeout_seconds: 15
+
+services:
+  auth:
+    - "http://localhost:8081"
+  user:
+    - "http://localhost:8082"
+  chat:
+    - "http://localhost:8083"
+  media:
+    - "http://localhost:8084"
+  notification:
+    - "http://localhost:8085"
+
+jwt:
+  public_key_path: "keys/public.pem"
+
+log:
+  level: "debug"

@@ -1,0 +1,19 @@
+app_env: development
+app_port: "8084"
+shutdown_timeout: 10s
+rate_limit_per_min: 60
+
+mongo_uri: "mongodb://localhost:27017/chatapp"
+mongo_db: "chatapp"
+
+redis_addr: "localhost:6379"
+redis_password: "fathimasithara"
+redis_db: 0
+
+kafka_brokers:
+  - "localhost:9092"
+kafka_topic_in: "chat_messages_in"
+kafka_topic_out: "chat_messages_out"
+
+jwt_public_key_path: "./keys/jwt_pub.pem"
+jwt_alg: "RS256"
