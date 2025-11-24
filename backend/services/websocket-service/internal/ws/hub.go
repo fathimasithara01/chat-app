@@ -47,7 +47,6 @@ func (h *Hub) Broadcast(room string, msg interface{}) {
 		select {
 		case c.send <- msg:
 		case <-time.After(200 * time.Millisecond):
-			// slow consumer — unregister
 			h.Unregister(room, c)
 			close(c.send)
 		}

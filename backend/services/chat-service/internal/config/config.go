@@ -21,8 +21,8 @@ type Mongo struct {
 
 type JWTCfg struct {
 	PublicKeyPath string `yaml:"public_key_path"`
-	Algorithm     string `yaml:"algorithm"` // "RS256" or "HS256"
-	Secret        string `yaml:"secret"`    // for HS256
+	Algorithm     string `yaml:"algorithm"`
+	Secret        string `yaml:"secret"`
 }
 
 type NATS struct {

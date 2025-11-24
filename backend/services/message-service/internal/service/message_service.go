@@ -14,7 +14,7 @@ import (
 
 type MessageService struct {
 	repo  *repository.MongoRepository
-	cache *redis.Client // optional
+	cache *redis.Client 
 }
 
 func NewMessageService(r *repository.MongoRepository, c *redis.Client) *MessageService {

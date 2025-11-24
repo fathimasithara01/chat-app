@@ -34,7 +34,6 @@ func (c *Connection) readPump() {
 		}
 		var ev map[string]interface{}
 		if err := json.Unmarshal(data, &ev); err != nil {
-			// ignore invalid JSON from client, don't disconnect
 			continue
 		}
 		msg := map[string]interface{}{

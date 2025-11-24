@@ -18,15 +18,14 @@ type Config struct {
 	App App `yaml:"app"`
 
 	JWT struct {
-		Algorithm     string `yaml:"algorithm"`       // "RS256" or "HS256"
-		PublicKeyPath string `yaml:"public_key_path"` // for RS256
-		HSSecret      string `yaml:"hs_secret"`       // for HS256
+		Algorithm     string `yaml:"algorithm"`       
+		PublicKeyPath string `yaml:"public_key_path"` 
+		HSSecret      string `yaml:"hs_secret"`     
 	} `yaml:"jwt"`
 }
 
 func Load() (*Config, error) {
 	cfg := &Config{}
-	// defaults
 	cfg.App.Port = 8085
 	cfg.JWT.Algorithm = "RS256"
 	cfg.JWT.PublicKeyPath = "./keys/jwt_pub.pem"

@@ -9,7 +9,6 @@ import (
 	"github.com/gofiber/websocket/v2"
 )
 
-// NewServer wires hub and jwt validator into Fiber app.
 func NewServer(hub *Hub, jv *auth.JWTValidator, cfg *config.Config) *fiber.App {
 	app := fiber.New()
 
@@ -18,10 +17,8 @@ func NewServer(hub *Hub, jv *auth.JWTValidator, cfg *config.Config) *fiber.App {
 	})
 
 	app.Get("/ws", websocket.New(func(conn *websocket.Conn) {
-		// 1. Token from query
 		token := conn.Query("token")
 
-		// 2. Fallback to subprotocol only if needed
 		if token == "" {
 			token = conn.Subprotocol()
 		}
@@ -31,21 +28,18 @@ func NewServer(hub *Hub, jv *auth.JWTValidator, cfg *config.Config) *fiber.App {
 			return
 		}
 
-		// Validate JWT
 		sub, err := jv.Validate(token)
 		if err != nil {
 			conn.Close()
 			return
 		}
 
-		// chat_id required
 		chatID := conn.Query("chat_id")
 		if chatID == "" {
 			conn.Close()
 			return
 		}
 
-		// Create client
 		client := NewClient(conn, sub, chatID, hub, cfg.RateLimitPerSec)
 		hub.Register(client)
 

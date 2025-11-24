@@ -25,10 +25,8 @@ func NewServer(cfg *config.Config, wsrv *ws.Server, st store.Store, jv *auth.JWT
 
 	api := app.Group("/v1")
 
-	// health
 	api.Get("/health", func(c *fiber.Ctx) error { return c.JSON(fiber.Map{"status": "ok"}) })
 
-	// WebSocket upgrade check
 	api.Get("/ws", func(c *fiber.Ctx) error {
 		if websocket.IsWebSocketUpgrade(c) {
 			return c.Next()
@@ -36,10 +34,8 @@ func NewServer(cfg *config.Config, wsrv *ws.Server, st store.Store, jv *auth.JWT
 		return fiber.ErrUpgradeRequired
 	})
 
-	// WebSocket handler
 	api.Get("/ws", websocket.New(wsrv.HandleWS()))
 
-	// example REST: get latest messages for chat (no auth for demo; add auth as needed)
 	api.Get("/chats/:chat_id/messages", s.getLatestMessages)
 
 	return app

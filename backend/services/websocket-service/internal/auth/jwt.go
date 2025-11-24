@@ -34,7 +34,6 @@ func NewJWTValidatorHS256(secret string) (*JWTValidator, error) {
 	return &JWTValidator{alg: "HS256", secret: []byte(secret)}, nil
 }
 
-// Validate token, returns subject (sub) on success.
 func (j *JWTValidator) Validate(token string) (string, error) {
 	var keyFunc jwt.Keyfunc
 	if j.alg == "RS256" {

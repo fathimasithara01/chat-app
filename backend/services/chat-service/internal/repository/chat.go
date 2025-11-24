@@ -16,7 +16,6 @@ var ErrNotFound = errors.New("not found")
 type Repository struct{ coll *mongo.Collection }
 
 func NewMongoRepository(coll *mongo.Collection) *Repository {
-	// index on members array
 	idx := mongo.IndexModel{
 		Keys:    bson.D{{Key: "members", Value: 1}},
 		Options: options.Index().SetBackground(true).SetName("members_idx"),

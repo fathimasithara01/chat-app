@@ -43,7 +43,6 @@ func (h *Hub) Broadcast(chatID string, msg interface{}) {
 		select {
 		case c.send <- msg:
 		case <-time.After(200 * time.Millisecond):
-			// slow consumer — drop and unregister
 			h.Unregister(chatID, c)
 			close(c.send)
 		}

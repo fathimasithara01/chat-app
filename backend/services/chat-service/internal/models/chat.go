@@ -14,7 +14,7 @@ type Chat struct {
 	ID          string    `bson:"_id,omitempty" json:"id"`
 	Name        string    `bson:"name,omitempty" json:"name"`
 	IsGroup     bool      `bson:"is_group" json:"is_group"`
-	Members     []string  `bson:"members" json:"members"` // user IDs only
+	Members     []string  `bson:"members" json:"members"` 
 	LastMessage *Message  `bson:"last_message,omitempty" json:"last_message,omitempty"`
 	CreatedAt   time.Time `bson:"created_at" json:"created_at"`
 	UpdatedAt   time.Time `bson:"updated_at" json:"updated_at"`

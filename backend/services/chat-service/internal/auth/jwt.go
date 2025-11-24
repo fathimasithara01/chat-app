@@ -38,7 +38,6 @@ func NewJWTValidator(pubKeyPath, alg, secret string) (*JWTValidator, error) {
 	return jv, nil
 }
 
-// Validate returns subject (user id) on success
 func (j *JWTValidator) Validate(token string) (string, error) {
 	var keyFunc jwt.Keyfunc
 	if j.alg == "RS256" {

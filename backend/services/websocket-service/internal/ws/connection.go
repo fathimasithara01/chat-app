@@ -44,11 +44,9 @@ func (c *Connection) readPump() {
 		}
 		var payload map[string]interface{}
 		if err := json.Unmarshal(data, &payload); err != nil {
-			// ignore bad json
 			continue
 		}
 
-		// compat: if client sends {type:"chat", content:"..."}, broadcast enriched msg
 		msg := map[string]interface{}{
 			"type":      payload["type"],
 			"from":      c.uid,

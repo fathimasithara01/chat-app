@@ -14,8 +14,8 @@ import (
 type Client struct {
 	ws      *websocket.Conn
 	send    chan []byte
-	chat    string // chatID room
-	uid     string // user id
+	chat    string 
+	uid     string 
 	hub     *Hub
 	limiter *rate.Limiter
 	pending map[string]*Envelope
@@ -45,9 +45,7 @@ func (c *Client) readPump() {
 		if err != nil {
 			return
 		}
-		// rate limit inbound
 		if !c.limiter.Allow() {
-			// optionally send rate limit notice
 			continue
 		}
 		var env Envelope
@@ -55,7 +53,6 @@ func (c *Client) readPump() {
 			continue
 		}
 
-		// refresh presence on any incoming message
 		_ = c.hub.rdb.Set(context.Background(), "presence:"+c.uid, "online", 60*time.Second).Err()
 
 		switch env.Type {

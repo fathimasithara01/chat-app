@@ -15,7 +15,6 @@ type JWTValidator struct {
 	publicKey *rsa.PublicKey
 }
 
-// NewJWTValidatorRS256 loads an RSA public key from filesystem
 func NewJWTValidatorRS256(pubPath string) (*JWTValidator, error) {
 	b, err := ioutil.ReadFile(pubPath)
 	if err != nil {
@@ -36,7 +35,6 @@ func NewJWTValidatorRS256(pubPath string) (*JWTValidator, error) {
 	return &JWTValidator{publicKey: rsaPub}, nil
 }
 
-// Validate returns the subject (user id) on success
 func (j *JWTValidator) Validate(tokenStr string) (string, error) {
 	if tokenStr == "" {
 		return "", errors.New("empty token")
@@ -59,7 +57,6 @@ func (j *JWTValidator) Validate(tokenStr string) (string, error) {
 	}
 	subClaim, ok := claims["sub"].(string)
 	if !ok || subClaim == "" {
-		// fallback: "user_id" claim
 		if u, ok2 := claims["user_id"].(string); ok2 && u != "" {
 			return u, nil
 		}

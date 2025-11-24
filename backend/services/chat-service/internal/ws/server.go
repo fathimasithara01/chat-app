@@ -7,7 +7,7 @@ import (
 
 type Server struct {
 	hub *Hub
-	svc interface{} // optional link to service for message persistence
+	svc interface{}
 	jv  *auth.JWTValidator
 }
 

@@ -16,7 +16,7 @@ type Store interface {
 }
 
 type MemoryStore struct {
-	store map[string][]*Message // chatID -> msgs
+	store map[string][]*Message 
 }
 
 func NewMemoryStore() *MemoryStore {

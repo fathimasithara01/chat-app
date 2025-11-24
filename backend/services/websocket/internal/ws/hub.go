@@ -126,11 +126,9 @@ func (h *Hub) BroadcastLocal(chatID string, env *Envelope) {
 }
 
 func (h *Hub) Broadcast(chatID string, env *Envelope) error {
-	// push to local dispatcher (non-blocking)
 	select {
 	case h.localBroadcast <- env:
 	default:
-		// local buffer full: fallback to direct send
 		h.BroadcastLocal(chatID, env)
 	}
 	b, _ := json.Marshal(env)
