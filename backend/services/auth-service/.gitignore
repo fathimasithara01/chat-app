@@ -1,4 +1,7 @@
 .env
 config.yaml
-docker-compose.yamlkeys/private.pem
+docker-compose.yaml
+keys/private.pem
+*.pem
+keys/private.pem
 *.pem
