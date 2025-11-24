@@ -53,7 +53,7 @@ func Load() (*Config, error) {
 
 	cfg := &Config{}
 
-	data, err := os.ReadFile("config/config.yaml")
+	data, err := os.ReadFile("config.yaml")
 	if err != nil {
 		return nil, fmt.Errorf("failed to read YAML: %w", err)
 	}
