@@ -2,6 +2,5 @@
 config.yaml
 docker-compose.yaml
 keys/private.pem
-*.pem
 keys/private.pem
-*.pem
+keys/private.pem
