@@ -24,7 +24,7 @@ type Mongo struct {
 type JWTCfg struct {
 	PublicKeyPath string `yaml:"public_key_path"`
 	Algorithm     string `yaml:"algorithm"`
-	Secret        string `yaml:"secret"` // for HS256 ONLY
+	Secret        string `yaml:"secret"` 
 }
 
 type NATS struct {
@@ -44,11 +44,9 @@ type Config struct {
 	AESKey string `yaml:"aes_key"`
 }
 
-// Load loads (YAML + ENV) with strict validation
 func Load() (*Config, error) {
 	cfg := &Config{}
 
-	// 1. Load YAML if exists
 	if _, err := os.Stat("config.yaml"); err == nil {
 		b, _ := os.ReadFile("config.yaml")
 		if err := yaml.Unmarshal(b, cfg); err != nil {
@@ -56,12 +54,10 @@ func Load() (*Config, error) {
 		}
 	}
 
-	// 2. Load .env (override YAML)
 	_ = godotenv.Load()
 
 	overrideFromEnv(cfg)
 
-	// 3. Validate final config
 	if err := validate(cfg); err != nil {
 		return nil, err
 	}
@@ -69,7 +65,6 @@ func Load() (*Config, error) {
 	return cfg, nil
 }
 
-// ---------- ENV Overrides ----------
 func overrideFromEnv(cfg *Config) {
 	if v := os.Getenv("PORT"); v != "" {
 		fmt.Sscanf(v, "%d", &cfg.App.Port)
@@ -104,7 +99,6 @@ func overrideFromEnv(cfg *Config) {
 	}
 }
 
-// ---------- Validation ----------
 func validate(cfg *Config) error {
 	if cfg.App.Port == 0 {
 		return errors.New("app.port missing or invalid")
