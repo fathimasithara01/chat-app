@@ -88,6 +88,7 @@ func (r *mongoUserRepo) GetByIDAdmin(ctx context.Context, id string) (*models.Us
 
 func (r *mongoUserRepo) Update(ctx context.Context, u *models.User) (*models.User, error) {
 	u.UpdatedAt = time.Now().UTC()
+
 	updateData := bson.M{}
 	if u.Username != "" {
 		updateData["username"] = u.Username
@@ -100,10 +101,17 @@ func (r *mongoUserRepo) Update(ctx context.Context, u *models.User) (*models.Use
 	}
 	updateData["updated_at"] = u.UpdatedAt
 
+	if u.ID.IsZero() {
+		return nil, errors.New("invalid user ID")
+	}
+
+	// Perform update
 	_, err := r.col.UpdateByID(ctx, u.ID, bson.M{"$set": updateData})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("update failed: %w", err)
 	}
+
+	// Return updated user
 	return r.GetByID(ctx, u.ID.Hex())
 }
 

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io/ioutil"
 	"log"
+	"sync"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -29,42 +30,90 @@ var (
 	ErrInvalidToken = errors.New("invalid token")
 )
 
-// Load RSA Private Key
+var (
+	privKeyOnce sync.Once
+	pubKeyOnce  sync.Once
+)
+
+// Load RSA Private Key (PKCS#8)
 func LoadRSAPrivateKey(path string) *rsa.PrivateKey {
-	data, err := ioutil.ReadFile(path)
-	if err != nil {
-		log.Fatalf("failed to read private key: %v", err)
+	var privateKey *rsa.PrivateKey
+	var loadErr error
+
+	privKeyOnce.Do(func() {
+		data, err := ioutil.ReadFile(path)
+		if err != nil {
+			loadErr = err
+			return
+		}
+		block, _ := pem.Decode(data)
+		if block == nil || (block.Type != "PRIVATE KEY" && block.Type != "RSA PRIVATE KEY") {
+			loadErr = errors.New("invalid PEM private key")
+			return
+		}
+		var keyInterface interface{}
+		if block.Type == "PRIVATE KEY" {
+			keyInterface, err = x509.ParsePKCS8PrivateKey(block.Bytes)
+			if err != nil {
+				loadErr = err
+				return
+			}
+		} else {
+			keyInterface, err = x509.ParsePKCS1PrivateKey(block.Bytes)
+			if err != nil {
+				loadErr = err
+				return
+			}
+		}
+		privateKey = keyInterface.(*rsa.PrivateKey)
+	})
+
+	if loadErr != nil {
+		log.Fatalf("failed to load private key: %v", loadErr)
 	}
-	block, _ := pem.Decode(data)
-	if block == nil || block.Type != "RSA PRIVATE KEY" {
-		log.Fatal("invalid PEM private key")
-	}
-	key, err := x509.ParsePKCS1PrivateKey(block.Bytes)
-	if err != nil {
-		log.Fatalf("failed to parse private key: %v", err)
-	}
-	return key
+
+	return privateKey
 }
 
-// Load RSA Public Key
+// Load RSA Public Key (PKIX)
 func LoadRSAPublicKey(path string) *rsa.PublicKey {
-	data, err := ioutil.ReadFile(path)
-	if err != nil {
-		log.Fatalf("failed to read public key: %v", err)
+	var publicKey *rsa.PublicKey
+	var loadErr error
+
+	pubKeyOnce.Do(func() {
+		data, err := ioutil.ReadFile(path)
+		if err != nil {
+			loadErr = err
+			return
+		}
+		block, _ := pem.Decode(data)
+		if block == nil || (block.Type != "PUBLIC KEY" && block.Type != "RSA PUBLIC KEY") {
+			loadErr = errors.New("invalid PEM public key")
+			return
+		}
+		var pub interface{}
+		if block.Type == "PUBLIC KEY" {
+			pub, err = x509.ParsePKIXPublicKey(block.Bytes)
+		} else {
+			pub, err = x509.ParsePKCS1PublicKey(block.Bytes)
+		}
+		if err != nil {
+			loadErr = err
+			return
+		}
+		rsaPub, ok := pub.(*rsa.PublicKey)
+		if !ok {
+			loadErr = errors.New("not an RSA public key")
+			return
+		}
+		publicKey = rsaPub
+	})
+
+	if loadErr != nil {
+		log.Fatalf("failed to load public key: %v", loadErr)
 	}
-	block, _ := pem.Decode(data)
-	if block == nil || (block.Type != "PUBLIC KEY" && block.Type != "RSA PUBLIC KEY") {
-		log.Fatal("invalid PEM public key")
-	}
-	pub, err := x509.ParsePKIXPublicKey(block.Bytes)
-	if err != nil {
-		log.Fatalf("failed to parse public key: %v", err)
-	}
-	rsaPub, ok := pub.(*rsa.PublicKey)
-	if !ok {
-		log.Fatal("not an RSA public key")
-	}
-	return rsaPub
+
+	return publicKey
 }
 
 // Create new JWT manager
@@ -102,8 +151,8 @@ func (j *JWTManager) GenerateRefreshToken(userID string) (string, time.Time, err
 		RegisteredClaims: jwt.RegisteredClaims{
 			Subject:   userID,
 			ExpiresAt: jwt.NewNumericDate(exp),
-			IssuedAt: jwt.NewNumericDate(time.Now()),
-			Audience: jwt.ClaimStrings{"refresh"},
+			IssuedAt:  jwt.NewNumericDate(time.Now()),
+			Audience:  jwt.ClaimStrings{"refresh"},
 		},
 	}
 	token := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
@@ -131,7 +180,7 @@ func (j *JWTManager) VerifyToken(tokenStr string) (*CustomClaims, error) {
 	return nil, ErrInvalidToken
 }
 
-// Parse Access
+// Parse Access Token
 func (j *JWTManager) ParseAccess(tokenStr string) (string, error) {
 	claims, err := j.VerifyToken(tokenStr)
 	if err != nil {
@@ -143,7 +192,7 @@ func (j *JWTManager) ParseAccess(tokenStr string) (string, error) {
 	return claims.UserID, nil
 }
 
-// Parse Refresh
+// Parse Refresh Token
 func (j *JWTManager) ParseRefresh(tokenStr string) (string, error) {
 	claims, err := j.VerifyToken(tokenStr)
 	if err != nil {

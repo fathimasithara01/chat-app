@@ -20,52 +20,44 @@ var (
 	once          sync.Once
 )
 
-// Load RSA Public Key (only once during runtime)
+// Load public key once
 func loadPublicKey(path string) (*rsa.PublicKey, error) {
 	once.Do(func() {
-		keyBytes, err := ioutil.ReadFile(path)
+		data, err := ioutil.ReadFile(path)
 		if err != nil {
 			loadPublicErr = fmt.Errorf("failed to read public key: %w", err)
 			return
 		}
-
-		block, _ := pem.Decode(keyBytes)
+		block, _ := pem.Decode(data)
 		if block == nil {
-			loadPublicErr = errors.New("invalid PEM block for public key")
+			loadPublicErr = errors.New("invalid PEM block")
 			return
 		}
-
-		pub, err := jwt.ParseRSAPublicKeyFromPEM(keyBytes)
+		pub, err := jwt.ParseRSAPublicKeyFromPEM(data)
 		if err != nil {
-			loadPublicErr = fmt.Errorf("failed to parse RSA public key: %w", err)
+			loadPublicErr = fmt.Errorf("failed to parse public key: %w", err)
 			return
 		}
-
 		publicKey = pub
 	})
-
 	return publicKey, loadPublicErr
 }
 
+// JWT middleware
 func JWT() fiber.Handler {
 	return func(c *fiber.Ctx) error {
-
-		// Extract token
 		authHeader := c.Get("Authorization")
 		if authHeader == "" {
 			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "missing Authorization header"})
 		}
-
 		if !strings.HasPrefix(authHeader, "Bearer ") {
 			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "invalid Authorization header"})
 		}
 
-		tokenString := strings.TrimPrefix(authHeader, "Bearer ")
-
-		// Load RSA Public Key
+		tokenStr := strings.TrimPrefix(authHeader, "Bearer ")
 		keyPath := os.Getenv("JWT_PUBLIC_KEY_PATH")
 		if keyPath == "" {
-			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "public key path not configured"})
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "JWT_PUBLIC_KEY_PATH not set"})
 		}
 
 		pubKey, err := loadPublicKey(keyPath)
@@ -73,31 +65,24 @@ func JWT() fiber.Handler {
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
 		}
 
-		// Parse & verify token (RS256)
-		token, err := jwt.Parse(tokenString, func(t *jwt.Token) (interface{}, error) {
-			if t.Method.Alg() != jwt.SigningMethodRS256.Alg() {
-				return nil, fmt.Errorf("unexpected jwt signing method: %v", t.Header["alg"])
+		claims := jwt.MapClaims{}
+		token, err := jwt.ParseWithClaims(tokenStr, claims, func(t *jwt.Token) (interface{}, error) {
+			if _, ok := t.Method.(*jwt.SigningMethodRSA); !ok {
+				return nil, errors.New("invalid signing method")
 			}
 			return pubKey, nil
 		})
-
 		if err != nil || !token.Valid {
 			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "invalid or expired token"})
 		}
 
-		// Extract claims
-		claims, ok := token.Claims.(jwt.MapClaims)
-		if !ok {
-			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "invalid claims"})
+		sub, ok := claims["sub"].(string)
+		if !ok || sub == "" {
+			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "missing user id in token"})
 		}
 
-		// Save user ID into context
-		if userID, ok := claims["sub"]; ok {
-			c.Locals("user_id", userID)
-		} else {
-			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "missing user id"})
-		}
-
+		// Save user ID as hex string
+		c.Locals("user_id", sub)
 		return c.Next()
 	}
 }
