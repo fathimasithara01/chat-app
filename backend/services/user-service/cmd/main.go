@@ -35,7 +35,7 @@ func main() {
 	sugar := logger.Sugar()
 	sugar.Infof("starting user-service in %s mode", cfg.App.Env)
 
-	mongoURI := cfg.MongoURI
+	mongoURI := cfg.Mongo.URI
 	if v := os.Getenv("MONGO_URI"); v != "" {
 		mongoURI = v
 	}

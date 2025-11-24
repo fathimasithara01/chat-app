@@ -38,7 +38,7 @@ func main() {
 	rdb := redis.NewClient(&redis.Options{Addr: cfg.Redis.Addr, DB: cfg.Redis.DB})
 
 	var jv *auth.JWTValidator
-	if cfg.JWT.Algorithm == "RS256" {
+	if cfg.JWT.Alg == "RS256" {
 		jv, err = auth.NewJWTValidatorRS256(cfg.JWT.PublicKeyPath)
 	} else {
 		jv, err = auth.NewJWTValidatorHS256(cfg.JWT.HSSecret)
