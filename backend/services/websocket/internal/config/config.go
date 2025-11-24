@@ -23,15 +23,13 @@ type Config struct {
 
 func sanitize(s string) string {
 	s = strings.TrimSpace(s)
-	s = strings.Trim(s, `"`)
-	s = strings.Trim(s, `'`)
+	s = strings.Trim(s, `"'`)
 	s = strings.TrimPrefix(s, "\uFEFF")
 	return s
 }
 
 func Load() *Config {
-	err := godotenv.Load()
-	envLoaded := err == nil
+	_ = godotenv.Load()
 
 	cfg := &Config{
 		Port:             8086,
@@ -41,51 +39,67 @@ func Load() *Config {
 		PublicKeyPath:    "./keys/jwt_pub.pem",
 		RateLimitPerSec:  20,
 		EnablePrometheus: false,
-		EnvLoaded:        envLoaded,
 	}
 
 	overrideInt := func(key string, dest *int) {
-		if raw := os.Getenv(key); raw != "" {
-			raw = sanitize(raw)
-			if v, err := strconv.Atoi(raw); err == nil {
-				*dest = v
-			} else {
-				log.Fatalf("❌ Invalid value for %s: %s", key, raw)
-			}
+		val := sanitize(os.Getenv(key))
+		if val == "" {
+			return
 		}
+
+		v, err := strconv.Atoi(val)
+		if err != nil {
+			log.Fatalf("%s must be a number, got: %s", key, val)
+		}
+		*dest = v
 	}
 
 	overrideString := func(key string, dest *string) {
-		if raw := os.Getenv(key); raw != "" {
-			*dest = sanitize(raw)
+		val := sanitize(os.Getenv(key))
+		if val != "" {
+			*dest = val
 		}
 	}
 
 	overrideInt("PORT", &cfg.Port)
 	overrideString("REDIS_ADDR", &cfg.RedisAddr)
-	if raw := os.Getenv("REDIS_PASS"); raw != "" {
-		cfg.RedisPassword = sanitize(raw)
-	} else {
-		overrideString("REDIS_PASSWORD", &cfg.RedisPassword)
-	}
-	overrideInt("REDIS_DB", &cfg.RedisDB)
 
+	if v := sanitize(os.Getenv("REDIS_PASS")); v != "" {
+		cfg.RedisPassword = v
+	}
+	if v := sanitize(os.Getenv("REDIS_PASSWORD")); v != "" {
+		cfg.RedisPassword = v
+	}
+
+	overrideInt("REDIS_DB", &cfg.RedisDB)
 	overrideString("JWT_PUBLIC_KEY_PATH", &cfg.PublicKeyPath)
 	overrideInt("RATE_LIMIT_RPS", &cfg.RateLimitPerSec)
 
-	if raw := sanitize(os.Getenv("PROMETHEUS_ENABLED")); raw == "true" {
-		cfg.EnablePrometheus = true
+	if v := strings.ToLower(sanitize(os.Getenv("PROMETHEUS_ENABLED"))); v != "" {
+		cfg.EnablePrometheus = (v == "true" || v == "1" || v == "yes")
+	}
+
+	validate(cfg)
+
+	return cfg
+}
+
+func validate(cfg *Config) {
+	if cfg.Port < 1 || cfg.Port > 65535 {
+		log.Fatalf("Invalid PORT: %d (must be 1–65535)", cfg.Port)
 	}
 
 	if !strings.Contains(cfg.RedisAddr, ":") {
-		log.Fatalf(" Invalid REDIS_ADDR: %s (must be host:port)", cfg.RedisAddr)
+		log.Fatalf("Invalid REDIS_ADDR format: %s (expected host:port)", cfg.RedisAddr)
 	}
 
-	if cfg.Port <= 0 || cfg.Port > 65535 {
-		log.Fatalf(" Invalid PORT: %d", cfg.Port)
+	if cfg.PublicKeyPath == "" {
+		log.Fatalf("JWT_PUBLIC_KEY_PATH must not be empty")
 	}
 
-	return cfg
+	if cfg.RateLimitPerSec < 1 {
+		log.Fatalf("RATE_LIMIT_RPS must be >= 1")
+	}
 }
 
 func (c *Config) PortString() string {
