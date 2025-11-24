@@ -7,6 +7,7 @@ require (
 	github.com/gofiber/websocket/v2 v2.2.1
 	github.com/golang-jwt/jwt/v5 v5.3.0
 	github.com/google/uuid v1.6.0
+	github.com/joho/godotenv v1.5.1
 	github.com/nats-io/nats.go v1.47.0
 	go.mongodb.org/mongo-driver v1.17.6
 	gopkg.in/yaml.v3 v3.0.1

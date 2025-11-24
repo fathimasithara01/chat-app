@@ -4,7 +4,9 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 
+	"github.com/joho/godotenv"
 	"gopkg.in/yaml.v3"
 )
 
@@ -22,46 +24,123 @@ type Mongo struct {
 type JWTCfg struct {
 	PublicKeyPath string `yaml:"public_key_path"`
 	Algorithm     string `yaml:"algorithm"`
-	Secret        string `yaml:"secret"`
+	Secret        string `yaml:"secret"` // for HS256 ONLY
 }
 
 type NATS struct {
 	URL string `yaml:"url"`
 }
 
-type Config struct {
-	App   App    `yaml:"app"`
-	Mongo Mongo  `yaml:"mongo"`
-	JWT   JWTCfg `yaml:"jwt"`
-	NATS  NATS   `yaml:"nats"`
+type Kafka struct {
+	Brokers []string `yaml:"brokers"`
 }
 
-func Load() (*Config, error) {
-	cfg := &Config{
-		App: App{Port: 8083},
-		Mongo: Mongo{
-			URI:      "mongodb://localhost:27017",
-			Database: "chatapp",
-		},
-		JWT: JWTCfg{
-			PublicKeyPath: "./keys/jwt_pub.pem",
-			Algorithm:     "RS256",
-			Secret:        "",
-		},
-		NATS: NATS{URL: "nats://localhost:4222"},
-	}
+type Config struct {
+	App    App    `yaml:"app"`
+	Mongo  Mongo  `yaml:"mongo"`
+	JWT    JWTCfg `yaml:"jwt"`
+	NATS   NATS   `yaml:"nats"`
+	Kafka  Kafka  `yaml:"kafka"`
+	AESKey string `yaml:"aes_key"`
+}
 
+// Load loads (YAML + ENV) with strict validation
+func Load() (*Config, error) {
+	cfg := &Config{}
+
+	// 1. Load YAML if exists
 	if _, err := os.Stat("config.yaml"); err == nil {
 		b, _ := os.ReadFile("config.yaml")
-		_ = yaml.Unmarshal(b, cfg)
+		if err := yaml.Unmarshal(b, cfg); err != nil {
+			return nil, fmt.Errorf("failed to parse config.yaml: %w", err)
+		}
 	}
 
-	if cfg.JWT.PublicKeyPath == "" && cfg.JWT.Secret == "" && cfg.JWT.Algorithm == "RS256" {
-		return nil, errors.New("jwt.public_key_path missing for RS256")
-	}
-	if cfg.NATS.URL == "" {
-		return nil, errors.New("nats.url missing")
+	// 2. Load .env (override YAML)
+	_ = godotenv.Load()
+
+	overrideFromEnv(cfg)
+
+	// 3. Validate final config
+	if err := validate(cfg); err != nil {
+		return nil, err
 	}
 
 	return cfg, nil
+}
+
+// ---------- ENV Overrides ----------
+func overrideFromEnv(cfg *Config) {
+	if v := os.Getenv("PORT"); v != "" {
+		fmt.Sscanf(v, "%d", &cfg.App.Port)
+	}
+
+	if v := os.Getenv("MONGO_URI"); v != "" {
+		cfg.Mongo.URI = v
+	}
+	if v := os.Getenv("MONGO_DB"); v != "" {
+		cfg.Mongo.Database = v
+	}
+
+	if v := os.Getenv("JWT_PUBLIC_KEY_PATH"); v != "" {
+		cfg.JWT.PublicKeyPath = v
+	}
+	if v := os.Getenv("JWT_ALGORITHM"); v != "" {
+		cfg.JWT.Algorithm = v
+	}
+	if v := os.Getenv("JWT_SECRET"); v != "" {
+		cfg.JWT.Secret = v
+	}
+
+	if v := os.Getenv("NATS_URL"); v != "" {
+		cfg.NATS.URL = v
+	}
+	if v := os.Getenv("KAFKA_BROKER"); v != "" {
+		cfg.Kafka.Brokers = strings.Split(v, ",")
+	}
+
+	if v := os.Getenv("AES256_KEY"); v != "" {
+		cfg.AESKey = v
+	}
+}
+
+// ---------- Validation ----------
+func validate(cfg *Config) error {
+	if cfg.App.Port == 0 {
+		return errors.New("app.port missing or invalid")
+	}
+
+	if cfg.Mongo.URI == "" {
+		return errors.New("mongo.uri missing")
+	}
+	if cfg.Mongo.Database == "" {
+		return errors.New("mongo.database missing")
+	}
+
+	switch strings.ToUpper(cfg.JWT.Algorithm) {
+	case "RS256":
+		if cfg.JWT.PublicKeyPath == "" {
+			return errors.New("jwt.public_key_path required for RS256")
+		}
+	case "HS256":
+		if cfg.JWT.Secret == "" {
+			return errors.New("jwt.secret is required for HS256")
+		}
+	default:
+		return errors.New("invalid jwt.algorithm (allowed: RS256, HS256)")
+	}
+
+	if cfg.NATS.URL == "" {
+		return errors.New("nats.url missing")
+	}
+
+	if len(cfg.Kafka.Brokers) == 0 {
+		return errors.New("kafka.brokers missing")
+	}
+
+	if len(cfg.AESKey) != 32 {
+		return errors.New("aes_key must be a 32-byte string for AES-256")
+	}
+
+	return nil
 }
