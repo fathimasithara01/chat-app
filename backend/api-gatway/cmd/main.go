@@ -2,66 +2,72 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"os/signal"
 	"syscall"
 	"time"
 
-	"api-gateway/internal/config"
-	"api-gateway/internal/middlewares"
-	"api-gateway/internal/routes"
-	"api-gateway/internal/utils"
-
+	"github.com/fathima-sithara/api-gateway/internal/config"
+	"github.com/fathima-sithara/api-gateway/internal/discovery"
+	"github.com/fathima-sithara/api-gateway/internal/middleware"
+	"github.com/fathima-sithara/api-gateway/internal/proxy"
+	"github.com/fathima-sithara/api-gateway/internal/router"
 	"github.com/gofiber/fiber/v2"
-	flogger "github.com/gofiber/fiber/v2/middleware/logger"
-	"github.com/gofiber/fiber/v2/middleware/recover"
+	"go.uber.org/zap"
 )
 
 func main() {
-	// load config
-	cfg, err := config.LoadConfig("config/config.yaml")
+	// Logger
+	logger, _ := zap.NewProduction()
+	defer logger.Sync()
+
+	cfg, err := config.LoadFromEnv()
 	if err != nil {
-		panic(err)
+		logger.Fatal("failed to load config", zap.Error(err))
 	}
 
-	// logger
-	z, _ := utils.NewZapLogger(cfg.Log.Level == "debug")
-	defer z.Sync()
-	sugar := z.Sugar()
-	sugar.Infof("starting api-gateway on port %s", cfg.Server.Port)
+	// Service discovery (static + optional consul)
+	disc, err := discovery.NewDiscovery(cfg, logger)
+	if err != nil {
+		logger.Fatal("discovery init failed", zap.Error(err))
+	}
 
-	// fiber app
+	// Proxy (uses discovery)
+	p := proxy.NewProxy(disc, logger, cfg.CircuitBreaker)
+
+	// Fiber app
 	app := fiber.New(fiber.Config{
-		ReadTimeout:  time.Duration(cfg.Server.ReadTimeoutSeconds) * time.Second,
-		WriteTimeout: time.Duration(cfg.Server.WriteTimeoutSeconds) * time.Second,
+		Prefork:               false,
+		DisableStartupMessage: true,
 	})
 
-	// middlewares
-	app.Use(recover.New())
-	app.Use(flogger.New())
-	app.Use(middleware.RequestID())
+	// Middlewares
+	// JWT validates token and sets c.Locals("user_id")
+	jwtMw, err := middleware.NewJWTMiddleware(cfg.JWTPublicKeyPath, logger)
+	if err != nil {
+		logger.Fatal("jwt middleware init failed", zap.Error(err))
+	}
+	rl := middleware.NewIPRateLimiter(cfg.RateLimitPerMin, logger)
 
-	// register routes
-	routes.RegisterRoutes(app, cfg.Services, cfg.JWT.PublicKeyPath, sugar)
+	// Register routes
+	router.RegisterRoutes(app, p, jwtMw, rl, logger)
 
-	// start server
+	// Start server
+	srvPort := cfg.Port
 	go func() {
-		addr := fmt.Sprintf(":%s", cfg.Server.Port)
-		if err := app.Listen(addr); err != nil {
-			sugar.Fatalf("server failed: %v", err)
+		logger.Info("starting gateway", zap.String("port", srvPort))
+		if err := app.Listen(":" + srvPort); err != nil {
+			logger.Fatal("server failed", zap.Error(err))
 		}
 	}()
 
-	// graceful shutdown
 	quit := make(chan os.Signal, 1)
-	signal.Notify(quit, os.Interrupt, syscall.SIGTERM)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
-	sugar.Info("shutdown signal received, shutting down...")
-
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	logger.Info("shutting down gateway")
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	_ = app.Shutdown()
-	sugar.Info("api-gateway stopped")
-	_ = ctx
+	_ = disc.Close(ctx)
+	logger.Info("gateway stopped")
 }
