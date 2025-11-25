@@ -17,7 +17,6 @@ type Claims struct {
 	jwt.RegisteredClaims
 }
 
-// Load RSA Public Key from file
 func LoadRSAPublicKey(path string) (*rsa.PublicKey, error) {
 	data, err := ioutil.ReadFile(path)
 	if err != nil {
@@ -38,7 +37,6 @@ func LoadRSAPublicKey(path string) (*rsa.PublicKey, error) {
 	return rsaPub, nil
 }
 
-// Parse JWT using RS256 public key
 func ParseJWT(tokenStr string) (*Claims, error) {
 	pubPath := os.Getenv("JWT_PUBLIC_KEY_PATH")
 	if pubPath == "" {

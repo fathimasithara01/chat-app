@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"errors"
+	"strings"
 
 	"github.com/fathima-sithara/user-service/internal/repository"
 	"github.com/fathima-sithara/user-service/internal/service"
@@ -51,16 +52,26 @@ func (h *Handler) UpdateProfile(c *fiber.Ctx) error {
 	if userID == nil {
 		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "unauthenticated"})
 	}
+
 	uid := userID.(string)
+
 	var req updateProfileReq
 	if err := c.BodyParser(&req); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid body"})
 	}
+
 	u, err := h.svc.UpdateProfile(c.Context(), uid, req.Username, req.Email, req.Phone)
 	if err != nil {
+
+		// Duplicate error handling
+		if strings.Contains(err.Error(), "exists") {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+		}
+
 		h.log.Error("update profile failed", zap.Error(err))
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to update profile"})
 	}
+
 	return c.JSON(u)
 }
 

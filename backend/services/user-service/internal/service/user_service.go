@@ -19,7 +19,7 @@ var ErrInvalidCredentials = errors.New("invalid credentials")
 
 type UserService struct {
 	repo       repository.UserRepository
-	authSvcURL string 
+	authSvcURL string
 	log        *zap.Logger
 	httpClient *http.Client
 }
@@ -46,6 +46,7 @@ func (s *UserService) UpdateProfile(ctx context.Context, userID string, username
 	if err != nil {
 		return nil, err
 	}
+
 	if username != "" {
 		u.Username = username
 	}
@@ -55,6 +56,7 @@ func (s *UserService) UpdateProfile(ctx context.Context, userID string, username
 	if phone != "" {
 		u.Phone = phone
 	}
+
 	return s.repo.Update(ctx, u)
 }
 

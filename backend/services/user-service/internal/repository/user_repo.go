@@ -59,14 +59,20 @@ func (r *mongoUserRepo) GetByID(ctx context.Context, id string) (*models.User, e
 	if err != nil {
 		return nil, fmt.Errorf("invalid id: %w", err)
 	}
+
 	var u models.User
-	err = r.col.FindOne(ctx, bson.M{"_id": objID, "deleted_at": bson.M{"$exists": false}}).Decode(&u)
+	err = r.col.FindOne(ctx, bson.M{
+		"_id":        objID,
+		"deleted_at": bson.M{"$exists": false},
+	}).Decode(&u)
+
 	if err == mongo.ErrNoDocuments {
 		return nil, ErrUserNotFound
 	}
 	if err != nil {
 		return nil, err
 	}
+
 	return &u, nil
 }
 
@@ -87,31 +93,68 @@ func (r *mongoUserRepo) GetByIDAdmin(ctx context.Context, id string) (*models.Us
 }
 
 func (r *mongoUserRepo) Update(ctx context.Context, u *models.User) (*models.User, error) {
-	u.UpdatedAt = time.Now().UTC()
-
-	updateData := bson.M{}
-	if u.Username != "" {
-		updateData["username"] = u.Username
-	}
-	if u.Email != "" {
-		updateData["email"] = u.Email
-	}
-	if u.Phone != "" {
-		updateData["phone"] = u.Phone
-	}
-	updateData["updated_at"] = u.UpdatedAt
-
 	if u.ID.IsZero() {
 		return nil, errors.New("invalid user ID")
 	}
 
-	// Perform update
+	// ---- Duplicate Checks ----
+	// Check username
+	if u.Username != "" {
+		count, err := r.col.CountDocuments(ctx, bson.M{
+			"username": u.Username,
+			"_id":      bson.M{"$ne": u.ID},
+		})
+		if err != nil {
+			return nil, err
+		}
+		if count > 0 {
+			return nil, fmt.Errorf("username already exists")
+		}
+	}
+
+	// Check email
+	if u.Email != "" {
+		count, err := r.col.CountDocuments(ctx, bson.M{
+			"email": u.Email,
+			"_id":   bson.M{"$ne": u.ID},
+		})
+		if err != nil {
+			return nil, err
+		}
+		if count > 0 {
+			return nil, fmt.Errorf("email already exists")
+		}
+	}
+
+	// Check phone
+	if u.Phone != "" {
+		count, err := r.col.CountDocuments(ctx, bson.M{
+			"phone": u.Phone,
+			"_id":   bson.M{"$ne": u.ID},
+		})
+		if err != nil {
+			return nil, err
+		}
+		if count > 0 {	
+			return nil, fmt.Errorf("phone already exists")
+		}
+	}
+
+	// ---- Update ----
+	u.UpdatedAt = time.Now().UTC()
+
+	updateData := bson.M{
+		"updated_at": u.UpdatedAt,
+		"username":   u.Username,
+		"email":      u.Email,
+		"phone":      u.Phone,
+	}
+
 	_, err := r.col.UpdateByID(ctx, u.ID, bson.M{"$set": updateData})
 	if err != nil {
 		return nil, fmt.Errorf("update failed: %w", err)
 	}
 
-	// Return updated user
 	return r.GetByID(ctx, u.ID.Hex())
 }
 

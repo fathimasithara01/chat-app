@@ -76,12 +76,12 @@ func JWT() fiber.Handler {
 			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "invalid or expired token"})
 		}
 
-		sub, ok := claims["sub"].(string)
+		// FIXED: your claim key is "user_id"
+		sub, ok := claims["user_id"].(string)
 		if !ok || sub == "" {
 			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "missing user id in token"})
 		}
 
-		// Save user ID as hex string
 		c.Locals("user_id", sub)
 		return c.Next()
 	}
