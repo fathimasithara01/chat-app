@@ -1,0 +1,63 @@
+{
+  "id": "chatapp-environment-001",
+  "name": "ChatApp Local Environment",
+  "values": [
+    {
+      "key": "BASE_URL",
+      "value": "http://localhost:8000",
+      "type": "default",
+      "enabled": true
+    },
+    {
+      "key": "WS_URL",
+      "value": "ws://localhost:8000/ws",
+      "type": "default",
+      "enabled": true
+    },
+    {
+      "key": "AUTH_SERVICE_URL",
+      "value": "http://localhost:8001",
+      "type": "default",
+      "enabled": true
+    },
+    {
+      "key": "CHAT_SERVICE_URL",
+      "value": "http://localhost:8002",
+      "type": "default",
+      "enabled": true
+    },
+    {
+      "key": "USER_SERVICE_URL",
+      "value": "http://localhost:8003",
+      "type": "default",
+      "enabled": true
+    },
+    {
+      "key": "KAFKA_BROKER",
+      "value": "localhost:9092",
+      "type": "default",
+      "enabled": true
+    },
+    {
+      "key": "REDIS_URL",
+      "value": "redis://localhost:6379",
+      "type": "default",
+      "enabled": true
+    },
+    {
+      "key": "MONGO_URI",
+      "value": "mongodb://localhost:27017/chatapp",
+      "type": "default",
+      "enabled": true
+    },
+    {
+      "key": "JWT_TEST_TOKEN",
+      "value": "sample-jwt-token-only-for-testing",
+      "type": "default",
+      "enabled": true
+    }
+  ],
+  "_postman_variable_scope": "environment",
+  "_postman_exported_at": "2025-12-05T00:00:00.000Z",
+  "_postman_exported_using": "Postman/10.x"
+}
