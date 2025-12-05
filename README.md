@@ -64,6 +64,14 @@ Using Docker & Docker Compose.
  │ Auth     │   │ User     │   │ Chat      │  │ Message       │  │ Notify     │
  │ Service  │   │ Service  │   │ Service   │  │ Service       │  │ Service    │
  └──────────┘   └──────────┘   └───────────┘  └───────────────┘  └────────────┘
+
+
+ ### High-Level Architecture
+![Architecture Diagram](./docs/architecture.png)
+
+### Event / Sequence Flow
+![Sequence Flow](./docs/sequence-flow.png)
+
 ```
 
 **Database:** MongoDB  
