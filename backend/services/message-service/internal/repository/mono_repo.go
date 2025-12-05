@@ -105,7 +105,6 @@ func (r *MongoRepository) GetMessageByID(ctx context.Context, messageID string) 
 		}
 		return nil, err
 	}
-	// normalize
 	if m.ReadBy == nil {
 		m.ReadBy = []string{}
 	}

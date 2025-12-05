@@ -35,7 +35,6 @@ var (
 	pubKeyOnce  sync.Once
 )
 
-// Load RSA Private Key (PKCS#8)
 func LoadRSAPrivateKey(path string) *rsa.PrivateKey {
 	var privateKey *rsa.PrivateKey
 	var loadErr error
@@ -75,7 +74,6 @@ func LoadRSAPrivateKey(path string) *rsa.PrivateKey {
 	return privateKey
 }
 
-// Load RSA Public Key (PKIX)
 func LoadRSAPublicKey(path string) *rsa.PublicKey {
 	var publicKey *rsa.PublicKey
 	var loadErr error
@@ -116,7 +114,6 @@ func LoadRSAPublicKey(path string) *rsa.PublicKey {
 	return publicKey
 }
 
-// Create new JWT manager
 func NewJWTManager(privPath, pubPath string, accessMinutes int, refreshDays int) *JWTManager {
 	return &JWTManager{
 		privateKey: LoadRSAPrivateKey(privPath),
@@ -126,7 +123,6 @@ func NewJWTManager(privPath, pubPath string, accessMinutes int, refreshDays int)
 	}
 }
 
-// Generate Access Token
 func (j *JWTManager) GenerateAccessToken(userID string) (string, time.Time, error) {
 	exp := time.Now().Add(j.accessTTL)
 	claims := &CustomClaims{
@@ -143,7 +139,6 @@ func (j *JWTManager) GenerateAccessToken(userID string) (string, time.Time, erro
 	return signed, exp, err
 }
 
-// Generate Refresh Token
 func (j *JWTManager) GenerateRefreshToken(userID string) (string, time.Time, error) {
 	exp := time.Now().Add(j.refreshTTL)
 	claims := &CustomClaims{
@@ -160,7 +155,6 @@ func (j *JWTManager) GenerateRefreshToken(userID string) (string, time.Time, err
 	return signed, exp, err
 }
 
-// Verify token
 func (j *JWTManager) VerifyToken(tokenStr string) (*CustomClaims, error) {
 	token, err := jwt.ParseWithClaims(tokenStr, &CustomClaims{}, func(token *jwt.Token) (interface{}, error) {
 		if _, ok := token.Method.(*jwt.SigningMethodRSA); !ok {
@@ -180,7 +174,6 @@ func (j *JWTManager) VerifyToken(tokenStr string) (*CustomClaims, error) {
 	return nil, ErrInvalidToken
 }
 
-// Parse Access Token
 func (j *JWTManager) ParseAccess(tokenStr string) (string, error) {
 	claims, err := j.VerifyToken(tokenStr)
 	if err != nil {
@@ -192,7 +185,6 @@ func (j *JWTManager) ParseAccess(tokenStr string) (string, error) {
 	return claims.UserID, nil
 }
 
-// Parse Refresh Token
 func (j *JWTManager) ParseRefresh(tokenStr string) (string, error) {
 	claims, err := j.VerifyToken(tokenStr)
 	if err != nil {

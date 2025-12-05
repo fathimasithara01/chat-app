@@ -63,7 +63,6 @@ func (h *Handler) UpdateProfile(c *fiber.Ctx) error {
 	u, err := h.svc.UpdateProfile(c.Context(), uid, req.Username, req.Email, req.Phone)
 	if err != nil {
 
-		// Duplicate error handling
 		if strings.Contains(err.Error(), "exists") {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 		}

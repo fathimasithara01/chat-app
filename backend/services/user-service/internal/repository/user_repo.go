@@ -96,9 +96,7 @@ func (r *mongoUserRepo) Update(ctx context.Context, u *models.User) (*models.Use
 	if u.ID.IsZero() {
 		return nil, errors.New("invalid user ID")
 	}
-
-	// ---- Duplicate Checks ----
-	// Check username
+	
 	if u.Username != "" {
 		count, err := r.col.CountDocuments(ctx, bson.M{
 			"username": u.Username,
@@ -112,7 +110,6 @@ func (r *mongoUserRepo) Update(ctx context.Context, u *models.User) (*models.Use
 		}
 	}
 
-	// Check email
 	if u.Email != "" {
 		count, err := r.col.CountDocuments(ctx, bson.M{
 			"email": u.Email,
@@ -126,7 +123,6 @@ func (r *mongoUserRepo) Update(ctx context.Context, u *models.User) (*models.Use
 		}
 	}
 
-	// Check phone
 	if u.Phone != "" {
 		count, err := r.col.CountDocuments(ctx, bson.M{
 			"phone": u.Phone,
@@ -140,7 +136,6 @@ func (r *mongoUserRepo) Update(ctx context.Context, u *models.User) (*models.Use
 		}
 	}
 
-	// ---- Update ----
 	u.UpdatedAt = time.Now().UTC()
 
 	updateData := bson.M{

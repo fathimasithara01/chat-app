@@ -1,172 +1,128 @@
 version: "3.9"
 
 services:
-  # -----------------------------
-  # API Gateway
-  # -----------------------------
   api-gateway:
-    build: ./services/api_gateway
+    build:
+      context: ./backend/api-gateway
+      dockerfile: Dockerfile
     container_name: api-gateway
     ports:
       - "8000:8000"
+    env_file:
+      - ./backend/api-gateway/.env
     depends_on:
+      - auth-service
       - user-service
       - chat-service
+      - message-service
+      - notification-service
       - websocket-service
-    environment:
-      - USER_SERVICE_URL=http://user-service:8081
-      - CHAT_SERVICE_URL=http://chat-service:8082
-      - WS_SERVICE_URL=http://websocket-service:8083
-    networks:
-      - chatnet
+    restart: unless-stopped
 
-  # -----------------------------
-  # User Service
-  # -----------------------------
+  auth-service:
+    build:
+      context: ./services/auth-service
+      dockerfile: Dockerfile
+    container_name: auth-service
+    ports:
+      - "8001:8001"
+    env_file:
+      - ./services/auth-service/.env
+    depends_on:
+      - postgres
+      - redis
+    restart: unless-stopped
+
   user-service:
-    build: ./services/user_service
+    build:
+      context: ./services/user-service
+      dockerfile: Dockerfile
     container_name: user-service
     ports:
-      - "8081:8081"
+      - "8002:8002"
+    env_file:
+      - ./services/user-service/.env
     depends_on:
-      - mongodb
-    environment:
-      - MONGO_URI=mongodb://mongo1:27017,mongo2:27017,mongo3:27017/chatapp?replicaSet=rs0
-    networks:
-      - chatnet
+      - postgres
+    restart: unless-stopped
 
-  # -----------------------------
-  # Chat Service
-  # -----------------------------
   chat-service:
-    build: ./services/chat_service
+    build:
+      context: ./services/chat-service
+      dockerfile: Dockerfile
     container_name: chat-service
     ports:
-      - "8082:8082"
+      - "8003:8003"
+    env_file:
+      - ./services/chat-service/.env
     depends_on:
-      - kafka
-      - redis
-      - mongodb
-    environment:
-      - KAFKA_BROKER=kafka:9092
-      - REDIS_ADDR=redis:6379
-      - MONGO_URI=mongodb://mongo1:27017,mongo2:27017,mongo3:27017/chatapp?replicaSet=rs0
-    networks:
-      - chatnet
+      - postgres
+    restart: unless-stopped
 
-  # -----------------------------
-  # WebSocket Service
-  # -----------------------------
+  message-service:
+    build:
+      context: ./services/message-service
+      dockerfile: Dockerfile
+    container_name: message-service
+    ports:
+      - "8004:8004"
+    env_file:
+      - ./services/message-service/.env
+    restart: unless-stopped
+
+  notification-service:
+    build:
+      context: ./services/notification-service
+      dockerfile: Dockerfile
+    container_name: notification-service
+    ports:
+      - "8005:8005"
+    env_file:
+      - ./services/notification-service/.env
+    restart: unless-stopped
+
   websocket-service:
-    build: ./services/websocket_service
+    build:
+      context: ./services/websocket-service
+      dockerfile: Dockerfile
     container_name: websocket-service
     ports:
-      - "8083:8083"
+      - "9000:9000"
+    env_file:
+      - ./services/websocket-service/.env
     depends_on:
-      - kafka
       - redis
-    environment:
-      - KAFKA_BROKER=kafka:9092
-      - REDIS_ADDR=redis:6379
-    networks:
-      - chatnet
+    restart: unless-stopped
 
-  # -----------------------------
-  # Kafka + Zookeeper
-  # -----------------------------
-  zookeeper:
-    image: confluentinc/cp-zookeeper:latest
-    container_name: zookeeper
-    environment:
-      ZOOKEEPER_CLIENT_PORT: 2181
+  frontend:
+    build:
+      context: ./frontend
+    container_name: chat-frontend
     ports:
-      - "2181:2181"
-    networks:
-      - chatnet
-
-  kafka:
-    image: confluentinc/cp-kafka:latest
-    container_name: kafka
+      - "3000:3000"
     depends_on:
-      - zookeeper
-    environment:
-      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT
-      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
-    ports:
-      - "9092:9092"
-    networks:
-      - chatnet
+      - api-gateway
+    restart: unless-stopped
 
-  # -----------------------------
-  # Redis
-  # -----------------------------
+  postgres:
+    image: postgres:16
+    container_name: chat-postgres
+    environment:
+      POSTGRES_USER: root
+      POSTGRES_PASSWORD: root
+      POSTGRES_DB: chatdb
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    restart: unless-stopped
+
   redis:
-    image: redis:7-alpine
-    container_name: redis
+    image: redis:7
+    container_name: chat-redis
     ports:
       - "6379:6379"
-    networks:
-      - chatnet
+    restart: unless-stopped
 
-  # -----------------------------
-  # MongoDB Replica Set (3 nodes)
-  # -----------------------------
-  mongo1:
-    image: mongo:6
-    container_name: mongo1
-    command: ["mongod", "--replSet", "rs0", "--bind_ip_all"]
-    ports:
-      - "27017:27017"
-    networks:
-      - chatnet
-
-  mongo2:
-    image: mongo:6
-    container_name: mongo2
-    command: ["mongod", "--replSet", "rs0", "--bind_ip_all"]
-    ports:
-      - "27018:27017"
-    networks:
-      - chatnet
-
-  mongo3:
-    image: mongo:6
-    container_name: mongo3
-    command: ["mongod", "--replSet", "rs0", "--bind_ip_all"]
-    ports:
-      - "27019:27017"
-    networks:
-      - chatnet
-
-  # -----------------------------
-  # Initialize Replica Set
-  # -----------------------------
-  mongo-replica-init:
-    image: mongo:6
-    container_name: mongo-replica-init
-    depends_on:
-      - mongo1
-      - mongo2
-      - mongo3
-    entrypoint: >
-      bash -c "
-      sleep 5 &&
-      mongosh --host mongo1:27017 --eval '
-        rs.initiate({
-          _id: \"rs0\",
-          members: [
-            {_id: 0, host: \"mongo1:27017\"},
-            {_id: 1, host: \"mongo2:27017\"},
-            {_id: 2, host: \"mongo3:27017\"}
-          ]
-        })
-      '
-      "
-    networks:
-      - chatnet
-
-networks:
-  chatnet:
-    driver: bridge
+volumes:
+  pgdata:

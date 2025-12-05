@@ -29,7 +29,6 @@ func main() {
 	app := fiber.New()
 	route.Register(app, h)
 
-	// Start Kafka consumer
 	go kafka.StartConsumer(cfg.KafkaBrokers, cfg.KafkaTopic, svc)
 
 	log.Println("Notification service running on port", cfg.Port)

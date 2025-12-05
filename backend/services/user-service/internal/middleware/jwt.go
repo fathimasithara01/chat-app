@@ -20,7 +20,6 @@ var (
 	once          sync.Once
 )
 
-// Load public key once
 func loadPublicKey(path string) (*rsa.PublicKey, error) {
 	once.Do(func() {
 		data, err := ioutil.ReadFile(path)
@@ -43,7 +42,6 @@ func loadPublicKey(path string) (*rsa.PublicKey, error) {
 	return publicKey, loadPublicErr
 }
 
-// JWT middleware
 func JWT() fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		authHeader := c.Get("Authorization")
@@ -76,7 +74,6 @@ func JWT() fiber.Handler {
 			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "invalid or expired token"})
 		}
 
-		// FIXED: your claim key is "user_id"
 		sub, ok := claims["user_id"].(string)
 		if !ok || sub == "" {
 			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "missing user id in token"})
