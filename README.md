@@ -1,38 +1,46 @@
-Chat-App — Real-Time Messaging Platform (Go + Microservices)
+# Chat-App — Real-Time Messaging Platform (Go + Microservices)
 
-A production-grade real-time messaging platform built using Go (Fiber), WebSockets, Redis, Kafka, and MongoDB, structured as fully isolated microservices following clean architectural principles.
+A production-grade real-time messaging platform built using **Go (Fiber), WebSockets, Redis, Kafka, and MongoDB**, structured as fully isolated microservices following clean architectural principles.
 
-Designed for high scalability, low latency, and distributed fault tolerance, this system models how modern real-time applications such as Slack, Discord, and WhatsApp handle message delivery at scale.
+Designed for **high scalability, low latency, and distributed fault tolerance**, this system models how modern real-time applications such as Slack, Discord, and WhatsApp handle message delivery at scale.
 
-This project demonstrates end-to-end backend engineering, distributed event pipelines, and real-world microservice system design — the exact skillset expected for 10–18 LPA backend engineering roles.
+This project demonstrates end-to-end backend engineering, distributed event pipelines, and real-world microservice system design — the exact skillset expected for **10–18 LPA backend engineering roles**.
 
-Why This Project Stands Out
+---
 
-Fully functional real-time messaging pipeline
+##  Why This Project Stands Out
+
+###  Fully Functional Real-Time Messaging Pipeline
+```
 WebSocket → Redis → Kafka → Microservices → MongoDB → WebSocket Return
+```
 
-Clean microservices architecture
-Independent, isolated services with clear domain boundaries
+###  Clean Microservices Architecture
+Independent, isolated services with clear domain boundaries.
 
-Production-grade authentication
-JWT access/refresh tokens, OTP verification, secure token lifecycle
+### Production-Grade Authentication
+- JWT access & refresh tokens
+- OTP verification
+- Secure token lifecycle
 
-Distributed event communication
-Redis Pub/Sub for fast fan-out
-Kafka for reliable event persistence and ordered message streams
+###  Distributed Event Communication
+- Redis Pub/Sub for fast fan-out
+- Kafka for reliable event persistence and ordered message streams
 
-Guaranteed message delivery
-Acknowledgements and retry-safe architecture
+###  Guaranteed Message Delivery
+- Acknowledgements
+- Retry-safe architecture
 
-Complete domain coverage
-Auth • User • Chat • Message • Notification • WebSocket
+###  Complete Domain Coverage
+**Auth • User • Chat • Message • Notification • WebSocket**
 
-Fully containerized deployment
-Consistent environments using Docker & Docker Compose
+###  Fully Containerized Deployment
+Using Docker & Docker Compose.
 
-This system demonstrates your capability to design and implement large-scale, real-time, event-driven backend systems.
+---
 
-System Architecture
+##  System Architecture
+```
                    ┌───────────────────────────┐
                    │        Frontend (React)   │
                    │ - Real-time interface     │
@@ -56,84 +64,70 @@ System Architecture
  │ Auth     │   │ User     │   │ Chat      │  │ Message       │  │ Notify     │
  │ Service  │   │ Service  │   │ Service   │  │ Service       │  │ Service    │
  └──────────┘   └──────────┘   └───────────┘  └───────────────┘  └────────────┘
+```
 
+**Database:** MongoDB  
+**Communication:** REST + Event Streaming + WebSockets  
+**Scalability:** Thousands of concurrent connections per node
 
-Database: MongoDB
-Communication: REST + Event Streaming + WebSockets
-Scalability: Supports thousands of concurrent connections per node
+---
 
-Features
-Auth-Service
+##  Features
 
-Register, login, logout
+###  Auth-Service
+- Register, login, logout
+- OTP email verification
+- JWT access & refresh tokens
+- Password reset & update
 
-OTP email verification
+###  User-Service
+- Fetch user profile
+- Update user details
+- Delete user account
 
-JWT access and refresh tokens
+###  Chat-Service
+- Create 1–1 chats
+- Create and manage group chats
+- Add/remove group members
+- Fetch all chats for a user
 
-Password reset and update
+###  Message-Service
+- Send and receive messages
+- Edit & delete messages
+- Mark messages as read
+- Pre-signed media upload URL generation
+- Retrieve last message
 
-User-Service
+###  Notification-Service
+- Asynchronous notification processing
+- Kafka-driven event consumption
+- Fetch user notifications
 
-Fetch user profile
+###  WebSocket-Service
+- Real-time bi-directional messaging
+- Redis Pub/Sub broadcasting
+- Kafka forwarding for persistence
+- Typing indicators & online status
+- Horizontal scalability (1000+ connections per node)
 
-Update user details
+---
 
-Delete user account
+##  Tech Stack
+| Layer / Module       | Technology |
+|----------------------|------------|
+| Backend Framework    | Go (Fiber) |
+| Real-time Engine     | WebSockets |
+| Streaming Layer      | Kafka      |
+| Pub/Sub              | Redis      |
+| Database             | MongoDB    |
+| Authentication       | JWT, OTP   |
+| Deployment           | Docker, Compose |
+| Frontend             | React, EmailJS |
 
-Chat-Service
+---
 
-Create 1–1 chats
-
-Create and manage group chats
-
-Add/remove group members
-
-Fetch all chats for a user
-
-Message-Service
-
-Send and receive messages
-
-Edit and delete messages
-
-Mark messages as read
-
-Pre-signed media upload URL generation
-
-Retrieve last message
-
-Notification-Service
-
-Asynchronous notification processing
-
-Kafka-driven event consumption
-
-Fetch user notifications
-
-WebSocket-Service
-
-Real-time bi-directional messaging
-
-Redis Pub/Sub broadcasting
-
-Kafka forwarding for persistence
-
-Typing indicators, online status
-
-Horizontal scalability (1000+ connections per node)
-
-Tech Stack
-Layer / Module	Technology
-Backend Framework	Go (Fiber)
-Real-time Engine	WebSockets
-Streaming Layer	Kafka
-Pub/Sub	Redis
-Database	MongoDB
-Authentication	JWT, OTP
-Deployment	Docker, Compose
-Frontend	React, EmailJS
-Project Structure
+##  Project Structure
+```
 backend/
  ├── api-gateway/
  ├── services/
@@ -144,58 +138,131 @@ backend/
  │   ├── notification-service/
  │   └── websocket-service/
 frontend/
-
+```
 
 Each microservice contains:
-
+```
 cmd/
 internal/
 configs/
 keys/
-.env
+.env.example
+```
 
+Follows **Clean Architecture** principles.
 
-Follows Clean Architecture principles.
+---
 
-Run the Project
-Clone the repository
+Setup & Run
+1️⃣ Clone Repo
 git clone https://github.com/fathimasithara01/chat-app.git
 cd chat-app/backend
+2️⃣ Configure Environment Files
 
-Configure environments
+Each service includes:
 
-Each service includes .env.example
-Rename inside each service:
+.env.example
+
+Copy to real env:
 
 cp .env.example .env
 
-Start Backend
-docker-compose up --build
 
-Start Frontend
+
+
+## ▶ Run the Project
+
+### 1. Clone the repository
+```
+git clone https://github.com/fathimasithara01/chat-app.git
+cd chat-app/backend
+```
+
+### 2. Configure environments
+Each service includes a `.env.example` file:
+```
+cp .env.example .env
+```
+
+### 3. Start Backend
+```
+docker-compose up --build
+```
+
+### 4. Start Frontend
+```
 cd frontend
 npm install
 npm start
+```
 
-What This Project Demonstrates (For Recruiters)
+---
 
-Ability to design and build distributed systems
+##  What This Project Demonstrates (For Recruiters)
+- Ability to design and build **distributed systems**
+- Strong understanding of **event-driven architecture**
+- Hands-on experience with **Kafka, Redis, WebSockets**
+- Knowledge of **scalability patterns & microservices**
+- Secure **authentication and token lifecycle management**
+- Dockerized deployment and **production-grade engineering**
 
-Strong understanding of event-driven architecture
+This matches expectations for backend roles in the **10–18 LPA** range.
 
-Hands-on experience with Kafka, Redis, WebSockets
+---
 
-Knowledge of scalability patterns and microservices
+##  API Endpoints (Postman Collection)
+Below is a simplified list of API endpoints grouped by microservice. These match your Postman workspace.
 
-Secure authentication and token lifecycle management
+###  **Auth-Service**
+- `POST /register`
+- `POST /verifyEmail`
+- `POST /login`
+- `POST /request-otp`
+- `POST /OTP-verify`
+- `POST /refresh`
+- `POST /change-password`
+- `POST /logout`
 
-Dockerized deployment and real production workflows
+###  **User-Service**
+- `GET /getProfile`
+- `PUT /updateProfile`
+- `GET /getUserByID`
+- `DELETE /deleteUser`
 
-This aligns directly with expectations for backend roles in the 10–18 LPA range.
+###  **Chat-Service**
+- `POST /createChat`
+- `POST /createGroup`
+- `GET /listUserChats`
+- `GET /getChat`
+- `POST /addMember`
+- `DELETE /removeMember`
+- `PATCH /updateChat`
 
-Contact
+###  **Message-Service**
+- `POST /sendMessage`
+- `GET /listMessage`
+- `POST /markRead`
+- `PATCH /editMessage`
+- `DELETE /deleteMessage`
+- `POST /mediaUploadURL`
+- `GET /lastMessage`
 
-Fathima Sithara
-Email: fathimasithara011@gmail.com
+###  **Notification-Service**
+- `POST /sendNotification`
+- `GET /getUserNotification`
 
-GitHub: github.com/fathimasithara01
+###  **WebSocket-Service**
+- `WS /websocket`
+- `WS /connect`
+
+These endpoints are fully documented inside the included **Postman Collection**:
+```
+/postman/CHAT-APP.postman_collection.json
+/postman/chatapp_environment.json
+```
+---
+
+##  Contact
+**Fathima Sithara**  
+Email: `fathimasithara011@gmail.com`  
+GitHub: `github.com/fathimasithara01`

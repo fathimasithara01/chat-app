@@ -1,0 +1,172 @@
+version: "3.9"
+
+services:
+  # -----------------------------
+  # API Gateway
+  # -----------------------------
+  api-gateway:
+    build: ./services/api_gateway
+    container_name: api-gateway
+    ports:
+      - "8000:8000"
+    depends_on:
+      - user-service
+      - chat-service
+      - websocket-service
+    environment:
+      - USER_SERVICE_URL=http://user-service:8081
+      - CHAT_SERVICE_URL=http://chat-service:8082
+      - WS_SERVICE_URL=http://websocket-service:8083
+    networks:
+      - chatnet
+
+  # -----------------------------
+  # User Service
+  # -----------------------------
+  user-service:
+    build: ./services/user_service
+    container_name: user-service
+    ports:
+      - "8081:8081"
+    depends_on:
+      - mongodb
+    environment:
+      - MONGO_URI=mongodb://mongo1:27017,mongo2:27017,mongo3:27017/chatapp?replicaSet=rs0
+    networks:
+      - chatnet
+
+  # -----------------------------
+  # Chat Service
+  # -----------------------------
+  chat-service:
+    build: ./services/chat_service
+    container_name: chat-service
+    ports:
+      - "8082:8082"
+    depends_on:
+      - kafka
+      - redis
+      - mongodb
+    environment:
+      - KAFKA_BROKER=kafka:9092
+      - REDIS_ADDR=redis:6379
+      - MONGO_URI=mongodb://mongo1:27017,mongo2:27017,mongo3:27017/chatapp?replicaSet=rs0
+    networks:
+      - chatnet
+
+  # -----------------------------
+  # WebSocket Service
+  # -----------------------------
+  websocket-service:
+    build: ./services/websocket_service
+    container_name: websocket-service
+    ports:
+      - "8083:8083"
+    depends_on:
+      - kafka
+      - redis
+    environment:
+      - KAFKA_BROKER=kafka:9092
+      - REDIS_ADDR=redis:6379
+    networks:
+      - chatnet
+
+  # -----------------------------
+  # Kafka + Zookeeper
+  # -----------------------------
+  zookeeper:
+    image: confluentinc/cp-zookeeper:latest
+    container_name: zookeeper
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+    ports:
+      - "2181:2181"
+    networks:
+      - chatnet
+
+  kafka:
+    image: confluentinc/cp-kafka:latest
+    container_name: kafka
+    depends_on:
+      - zookeeper
+    environment:
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+    ports:
+      - "9092:9092"
+    networks:
+      - chatnet
+
+  # -----------------------------
+  # Redis
+  # -----------------------------
+  redis:
+    image: redis:7-alpine
+    container_name: redis
+    ports:
+      - "6379:6379"
+    networks:
+      - chatnet
+
+  # -----------------------------
+  # MongoDB Replica Set (3 nodes)
+  # -----------------------------
+  mongo1:
+    image: mongo:6
+    container_name: mongo1
+    command: ["mongod", "--replSet", "rs0", "--bind_ip_all"]
+    ports:
+      - "27017:27017"
+    networks:
+      - chatnet
+
+  mongo2:
+    image: mongo:6
+    container_name: mongo2
+    command: ["mongod", "--replSet", "rs0", "--bind_ip_all"]
+    ports:
+      - "27018:27017"
+    networks:
+      - chatnet
+
+  mongo3:
+    image: mongo:6
+    container_name: mongo3
+    command: ["mongod", "--replSet", "rs0", "--bind_ip_all"]
+    ports:
+      - "27019:27017"
+    networks:
+      - chatnet
+
+  # -----------------------------
+  # Initialize Replica Set
+  # -----------------------------
+  mongo-replica-init:
+    image: mongo:6
+    container_name: mongo-replica-init
+    depends_on:
+      - mongo1
+      - mongo2
+      - mongo3
+    entrypoint: >
+      bash -c "
+      sleep 5 &&
+      mongosh --host mongo1:27017 --eval '
+        rs.initiate({
+          _id: \"rs0\",
+          members: [
+            {_id: 0, host: \"mongo1:27017\"},
+            {_id: 1, host: \"mongo2:27017\"},
+            {_id: 2, host: \"mongo3:27017\"}
+          ]
+        })
+      '
+      "
+    networks:
+      - chatnet
+
+networks:
+  chatnet:
+    driver: bridge
