@@ -1,7 +1,7 @@
 # Chat App — Real-Time Messaging Platform (Go + Microservices)
 
-A real-time messaging platform built using Go (Fiber), WebSockets, Redis, Kafka, and MongoDB.  
-This project demonstrates backend engineering skills using a microservices architecture, event-driven communication, and real-time WebSocket messaging.
+A distributed real-time messaging backend built using Go (Fiber) with a microservices architecture. 
+The system enables low-latency real-time communication via WebSockets, with event-driven processing powered by Redis and Kafka.
 
 ---
 
@@ -16,8 +16,7 @@ This project implements a distributed messaging system with the following indepe
 - **Notification Service** — Asynchronous user notifications  
 - **WebSocket Service** — Real-time communication using WebSockets
 
-Each service follows clean architecture principles with separated handler, service, and repository layers.
-
+Each service follows a layered structure with clearly separated handler, service, and repository components.
 ---
 
 ##  Technologies Used
@@ -41,8 +40,8 @@ This project uses a **microservices architecture** where each service runs indep
 
 - **REST APIs** — For configuration and CRUD operations  
 - **WebSockets** — For real-time message delivery  
-- **Redis Pub/Sub** — For low-latency event broadcasting  
-- **Kafka** — For reliable event streaming and persistence  
+- **Redis Pub/Sub** — For low-latency real-time message broadcasting
+- **Kafka** — Durable event streaming and asynchronous processing
 
 Frontend (not included) can connect directly to WebSocket endpoints for real-time messaging.
 
@@ -74,10 +73,10 @@ Frontend (not included) can connect directly to WebSocket endpoints for real-tim
 - Kafka-driven asynchronous event handling
 
 ### WebSocket Service
-- Real-time bi-directional messaging
-- Redis Pub/Sub broadcasting
-- Kafka forwarding
-
+- Maintains persistent WebSocket connections
+- Publishes events to Redis for real-time fan-out
+- Forwards durable message events to Kafka
+  
 ---
 
 ##  Key Features
@@ -134,15 +133,7 @@ Each service has:
 
 ## System Flow
 
-##  High-Level Message Flow
-
-Client
-  → WebSocket Service
-    → Redis Pub/Sub (fan-out)
-      → Kafka (durable stream)
-        → Message Service
-          → MongoDB
-            → WebSocket Broadcast
+Client → WebSocket Service → Redis Pub/Sub → Kafka → Message Service → MongoDB → WebSocket Broadcast
 
 ---
 
@@ -150,23 +141,9 @@ Client
 
 - No production deployment setup included.
 - No horizontal scaling or load testing performed.
-- Intended for learning and backend system design demonstration.
-- Load testing pending
 - Frontend not included
 
 ---
-
-## Purpose
-
-This project demonstrates:
-
-- Microservices architecture design  
-- Real-time system implementation  
-- Event-driven backend communication  
-- Concurrent handling in Go  
-- Clean Architecture principles  
-
---- 
 
 Author: Fathima Sithara
 Role: Backend Engineer (Golang)
